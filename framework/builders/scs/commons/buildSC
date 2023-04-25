@@ -1,0 +1,188 @@
+#!/bin/bash -e
+
+  #############################################################
+  # Name: buildSC
+  # Description: SCRIPT FOR Supercomputers COMPSs BUILD
+  # Parameters: <SC_user>         Supercomputer user account. Preferable with ssh keys inserted
+  #             <SC_loginNode>    Node to login to the Supercomputer
+  #             <FullTmpPath>     Tmp path on the Supercomputer for deployment
+  #             <FullTargetPath>  Base Target Installation folder on Supercomputer
+  #             <AuxScript>       Script to execute inside the Supercomputer
+  #             <PRELOAD_ENV>     Pre-load environment on <AuxScript> execution
+  #############################################################
+
+  ####################
+  # FUNCTIONS
+  ####################
+  usage() {
+    echo " Usage: buildSC <SC_user> <SC_loginNode> <FullTmpPath> <FullTargetPath> <AuxScript> <PRELOAD_ENV>"
+    echo " "
+  }
+
+
+  ####################
+  # MAIN
+  ####################
+  # Get parameters
+  if [ $# -eq 1 ]; then
+    if [ "$1" == "usage" ]; then
+      usage
+      exit 0
+    fi
+  fi
+  if [ $# -ne 6 ]; then
+    echo "Incorrect number of parameters"
+    usage
+    exit 1
+  fi
+
+  # SET SCRIPT VARIABLES
+  SCuser=$1
+  SCloginNode=$2
+  SC_DIR=$3
+  SCtargetDir=$4
+  SCauxScript=$5
+  PRELOAD_ENV=$6
+  if [ $(uname) == "Darwin" ]; then
+    kafka=0 # Installation from macOS with kafka not available
+  else
+    kafka=1 # Set to 0 to skip kafka compilation
+  fi
+
+  # CREATE SC TMP DIR
+  echo "Creating remote tmp directory..."
+
+  uuid=$(uuidgen)
+  SCTMP_DIR=${SC_DIR}/tmp_${uuid}
+  # shellcheck disable=SC2029
+  ssh -t -t -o StrictHostKeyChecking=no -o BatchMode=yes -o ChallengeResponseAuthentication=no "${SCuser}"@"${SCloginNode}" mkdir -p "${SCTMP_DIR}"
+
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  SOURCES_DIR=${SCRIPT_DIR}/../../..
+  TMP_DIR=${SCRIPT_DIR}/tmp
+  SCauxScript_generic=${SCRIPT_DIR}/buildSC_aux
+
+  # Log script variables
+  echo "- SC user           = ${SCuser}"
+  echo "- SC login node     = ${SCloginNode}"
+  echo "- SC tmp Dir        = ${SCTMP_DIR}"
+  echo "- SC target Dir     = ${SCtargetDir}"
+  echo "- Script Dir        = ${SCRIPT_DIR}"
+  echo "- Aux Script        = ${SCauxScript}"
+  echo "- Generic AuxScript = ${SCauxScript_generic}"
+  echo "- Sources Dir       = ${SOURCES_DIR}"
+  echo "- Local tmp Dir     = ${TMP_DIR}"
+  sleep 5
+
+  # Compile sources
+  echo "- Compile sources"
+  cd "${SOURCES_DIR}"
+  touch compss/runtime/config/xml/projects/project_schema.xsd
+  touch compss/runtime/config/xml/resources/resources_schema.xsd
+  mvn -U -Dmaven.test.skip=true clean package
+  cd "${SCRIPT_DIR}"
+
+  # COPY TRUNK
+  echo "- Copy trunk to tmpdir"
+  rm -rf "${TMP_DIR}"
+  mkdir -p "${TMP_DIR}"
+  cp "${SOURCES_DIR}"/changelog "${TMP_DIR}"
+  cp -r "${SOURCES_DIR}"/compss "${TMP_DIR}"
+  cp -r "${SOURCES_DIR}"/dependencies "${TMP_DIR}"
+  cp -r "${SOURCES_DIR}"/files "${TMP_DIR}"
+  mkdir -p "${TMP_DIR}"/utils
+  cp -r "${SOURCES_DIR}"/utils/storage "${TMP_DIR}"/utils
+  cp -r "${SOURCES_DIR}"/builders/specs/cli/PyCOMPSsCLIResources "${TMP_DIR}"/cli
+  cp "${SOURCES_DIR}"/LICENSE "${TMP_DIR}"
+  cp "${SOURCES_DIR}"/NOTICE "${TMP_DIR}"
+  cp "${SOURCES_DIR}"/pom.xml "${TMP_DIR}"
+  cp "${SOURCES_DIR}"/README.md "${TMP_DIR}"
+  cp "${SOURCES_DIR}"/RELEASE_NOTES "${TMP_DIR}"
+  find "${TMP_DIR}" -name ".git*" -print0 -exec rm -rf {} \; | cat # Clean git files
+
+  # CLEAN TRUNK COMPILATION
+  echo "- Clean sources"
+  cd "${SOURCES_DIR}"
+  mvn -U clean
+  cd "${SCRIPT_DIR}"
+
+  # Compile streaming backend (kafka)
+  echo "- Compiling Streaming Backend (Kafka)"
+  if [ "$kafka" -ne 0 ]; then
+    cd "${TMP_DIR}"/dependencies/kafka
+    if which gradle; then
+      gradle
+      ev=$?
+    elif [ -n "${GRADLE_HOME}" ]; then
+      "${GRADLE_HOME}"/bin/gradle
+      ev=$?
+    else
+       echo "ERROR: Cannot find gradle installation. Please define it in the PATH or set the GRADLE_HOME environment variable"
+       exit 1
+    fi
+    if [ $ev -ne 0 ]; then
+      echo "ERROR: Failed to compile Kafka dependency"
+      exit 1
+    fi
+    ./gradlew jar
+    ev=$?
+    if [ $ev -ne 0 ]; then
+      echo "ERROR: Failed to build Kafka dependency"
+      exit 1
+    fi
+  fi
+  cd "${SCRIPT_DIR}"
+
+  # COMPSs Monitor APACHE
+  echo "- Downloading Apache for COMSPs Monitor"
+  cd "${TMP_DIR}"
+  TOMCAT_VER="7.0.65"
+  TOMCAT_URL="http://compss.bsc.es/repo/apache-tomcat/apache-tomcat-${TOMCAT_VER}.tar.gz"
+  wget ${TOMCAT_URL}
+  mv apache-tomcat-${TOMCAT_VER}.tar.gz apache-tomcat.tar.gz
+  cd "${SCRIPT_DIR}"
+
+  # DEPLOY ON TMP SC
+  echo "- Deploy files to TMP_DIR in SC"
+  # shellcheck disable=2029
+  ssh -t -t -o StrictHostKeyChecking=no -o BatchMode=yes -o ChallengeResponseAuthentication=no "${SCuser}"@"${SCloginNode}" "rm -rf ${SCTMP_DIR}; mkdir -p ${SCTMP_DIR}"
+
+  cd "${TMP_DIR}"
+  echo "PACKAGING RUNTIME FILES"
+  tar czf COMPSs_TMPDIR.tgz *
+  cd "${SCRIPT_DIR}"
+  echo "COPYING RUNTIME FILES TO THE SUPERCOMPUTER"
+
+  scp -r -q -o StrictHostKeyChecking=no "${TMP_DIR}/COMPSs_TMPDIR.tgz" "${SCuser}"@"${SCloginNode}":"${SCTMP_DIR}"
+  scp -r -q -o StrictHostKeyChecking=no "${SCauxScript}" "${SCuser}"@"${SCloginNode}":"${SCTMP_DIR}"
+  scp -r -q -o StrictHostKeyChecking=no "${SCauxScript_generic}" "${SCuser}"@"${SCloginNode}":"${SCTMP_DIR}"
+
+  rm -f "${TMP_DIR}"/COMPSs_TMPDIR.tgz
+
+  # Execute deployment aux script
+  echo "- Execute installation on SC"
+  SCauxScriptName=$(basename "${SCauxScript}")
+  # shellcheck disable=2029
+
+  echo "REMOTE EXTRACTION OF THE RUNTIME"
+  ssh -t -t -o StrictHostKeyChecking=no -o BatchMode=yes -o ChallengeResponseAuthentication=no "${SCuser}"@"${SCloginNode}" mkdir -p "${SCTMP_DIR}/tmp"
+  ssh -t -t -o StrictHostKeyChecking=no -o BatchMode=yes -o ChallengeResponseAuthentication=no "${SCuser}"@"${SCloginNode}" "tar xzf ${SCTMP_DIR}/COMPSs_TMPDIR.tgz --directory ${SCTMP_DIR}/tmp/ && rm -f ${SCTMP_DIR}/COMPSs_TMPDIR.tgz"
+
+  ssh -t -t -o StrictHostKeyChecking=no -o BatchMode=yes -o ChallengeResponseAuthentication=no "${SCuser}"@"${SCloginNode}" "${PRELOAD_ENV} ${SCTMP_DIR}/${SCauxScriptName} ${SCtargetDir}"
+  ev=$?
+  if [ $ev -ne 0 ]; then
+    echo "ERROR: Exception raised executing auxiliar script"
+    exit 1
+  fi
+
+  # ERASE TMP FILES
+  echo "- Erase tmp files"
+  # shellcheck disable=2029
+  ssh -t -t -o StrictHostKeyChecking=no -o BatchMode=yes -o ChallengeResponseAuthentication=no "${SCuser}"@"${SCloginNode}" "rm -rf ${SCTMP_DIR}"
+  rm -rf "${TMP_DIR}"
+
+  # END
+  echo "Congratulations!"
+  echo "COMPSs Runtime Successfully installed!"
+  echo " "
+  exit 0

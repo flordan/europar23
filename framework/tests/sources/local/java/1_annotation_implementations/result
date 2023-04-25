@@ -1,0 +1,124 @@
+#!/bin/bash -e
+
+  parse_job() {
+    local job_file="${1}"
+    job_type=$(grep "Method type" "${job_file}" | awk '{print $4}')
+    case "${job_type}" in 
+      "METHOD")
+        job_impl=$(grep "Method definition" "${job_file}" | tr "[" "\\t" | tr "," "\\t" | tr "=" "\\t" | awk '{ print $6 }')
+      ;;
+      "BINARY" | "MPI")      
+        job_impl=${job_type}
+      ;;
+      *)
+        echo "Unknown type ${job_type} in ${job_file}"
+      ;;
+    esac
+  }
+
+  verify_impl_counts() {
+    first_job="${1}"
+    last_job="${2}"
+    impl1_tag="${3}"
+    impl2_tag="${4}"
+
+    impl1=0
+    impl2=0
+    for job_id in $(seq ${first_job} ${last_job}); do
+      job_file=${target_log_folder}/jobs/job${job_id}_NEW.out
+      parse_job "${job_file}"
+      case "${job_impl}" in
+        "${impl1_tag}")
+          impl1=$(( impl1 + 1))
+          ;;
+        "${impl2_tag}")
+          impl2=$(( impl2 + 1))
+          ;;
+        *)
+          echo "Unexpected implementation for job ${job_id}: ${job_impl}"
+          exit 1
+          ;;
+      esac
+    done
+    if [ "${impl1}" == "0" ]; then
+      echo "No executions for ${impl1_tag}"
+      exit 1
+    fi
+    if [ "${impl2}" == "0" ]; then
+      echo "No executions for ${impl2_tag}"
+      exit 1
+    fi
+  }
+
+
+  # Obtain parameters
+  output_file=$1
+  error_file=$2
+  target_log_folder=$3
+
+  # Log files
+  runtime_log="${target_log_folder}/runtime.log"
+  resources_log="${target_log_folder}/resources.log"
+
+  #----------------------------------------------------------------------------------
+  # Check output standard out status
+  if [ -f "${output_file}" ]; then
+     result_expected="------------------------------------------------------------"
+     test_result=$(tail -1 "${output_file}")
+     if [ "${result_expected}" != "${test_result}" ]; then
+        echo "SOME ERROR WAS FOUND. CHECK ERRORS ABOVE." | tee -a "${output_file}"
+        exit 1
+     fi
+  else
+     echo "[ERROR] Output file not found" | tee -a "${output_file}"
+     exit 1
+  fi
+  # Check that ErrorManager has not raised any ERROR or FATAL message
+  if [ -f "${error_file}" ]; then
+    if grep -E "\\[ERRMGR\\].*(ERROR|FATAL|Shutting down COMPSs)" "${error_file}"; then
+      echo "ERROR: ErrorManager has raised a fatal error" | tee -a "${output_file}"
+      exit 1
+    fi
+  else
+    # Empty error file, no exceptions could have been raised
+    :
+  fi
+  # Check that the Runtime has not registered any fatal error
+  if [ -f "${runtime_log}" ]; then
+    if grep -E "ErrorManager\\].*\\[ERRMGR\\].*Error detected. Shutting down COMPSs" "${runtime_log}"; then
+      echo "ERROR: ErrorManager has registered a fatal error in the runtime.log" | tee -a "${output_file}"
+      exit 1
+    fi
+  else
+    echo "[ERROR] runtime.log not found" | tee -a "${output_file}"
+    exit 1
+  fi
+
+  #----------------------------------------------------------------------------------
+  # Check that all the tasks produce the correct value
+  valueExpected=3
+  resultsGot=$(grep "Final counter value on file" "${runtime_log}" | awk '{ print $NF }')
+  for val in $resultsGot; do
+    if [ "$val" -ne $valueExpected ]; then
+      echo "ERROR: Task produced incorrect value" | tee -a "${output_file}"
+      echo "GOT: $val" | tee -a "${output_file}"
+      echo "EXPECTED: $valueExpected" | tee -a "${output_file}"
+      exit 1
+    fi
+  done
+  
+  #---------------------------------------------------------------------------------- 
+  # Check that each job runs its correct implementation
+  verify_impl_counts "1" "3" "multiImplementations.Implementation1" "multiImplementations.Implementation2"
+  
+  verify_impl_counts "4" "6" "multiImplementations.Implementation1" "BINARY"
+
+  verify_impl_counts "7" "9" "multiImplementations.Implementation1" "BINARY"
+  
+  verify_impl_counts "10" "12" "multiImplementations.Implementation1" "MPI"
+
+  verify_impl_counts "13" "15" "multiImplementations.Implementation1" "MPI"
+
+  #---------------------------------------------------------------------------------- 
+  # All ok
+  exit 0

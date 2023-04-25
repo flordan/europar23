@@ -1,0 +1,10 @@
+{
+    "execution" : {
+      "type":"binary",
+      "binary":"ls"
+    },
+    "container": {
+        "engine": "DOCKER",
+        "image": "ubuntu"
+    }
+}

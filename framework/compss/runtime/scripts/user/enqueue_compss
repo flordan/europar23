@@ -1,0 +1,221 @@
+#!/bin/bash
+
+# Setting up COMPSs_HOME
+if [ -z "${COMPSS_HOME}" ]; then
+  COMPSS_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../../.. && pwd )/"
+fi
+if [ ! "${COMPSS_HOME: -1}" = "/" ]; then
+  COMPSS_HOME="${COMPSS_HOME}/"
+fi
+export COMPSS_HOME=${COMPSS_HOME}
+
+#---------------------------------------------------
+# SCRIPT CONSTANTS DECLARATION
+#---------------------------------------------------
+DEFAULT_SC_CFG="default"
+
+
+#---------------------------------------------------
+# ERROR CONSTANTS DECLARATION
+#---------------------------------------------------
+ERROR_CFG_SC="SuperComputer CFG file doesn't exist"
+ERROR_CFG_Q="Queue system CFG file doesn't exist"
+
+
+#---------------------------------------------------------------------------------------
+# HELPER FUNCTIONS
+#---------------------------------------------------------------------------------------
+
+###############################################
+# Displays usage
+###############################################
+usage() {
+  exitValue=$1
+
+  # Load default CFG for default values
+  local defaultSC_cfg="${COMPSS_HOME}Runtime/scripts/queues/supercomputers/${DEFAULT_SC_CFG}.cfg"
+  #shellcheck source=../queues/supercomputers/default.cfg
+  source "${defaultSC_cfg}"
+  local defaultQS_cfg="${COMPSS_HOME}Runtime/scripts/queues/queue_systems/${QUEUE_SYSTEM}.cfg"
+  #shellcheck source=../queues/queue_systems/slurm.cfg
+  source "${defaultQS_cfg}"
+
+  # Show usage
+  cat <<EOT
+Usage: $0 [queue_system_options] [COMPSs_options] application_name application_arguments
+
+* Options:
+  General:
+    --help, -h                              Print this help message
+    --heterogeneous                         Indicates submission is going to be heterogeneous
+                                            Default: Disabled
+  Queue system configuration:
+    --sc_cfg=<name>                         SuperComputer configuration file to use. Must exist inside queues/cfgs/
+                                            Default: ${DEFAULT_SC_CFG}
+
+  Submission configuration:
+EOT
+  "${COMPSS_HOME}Runtime/scripts/queues/commons/submit.sh" --opts
+
+  exit "$exitValue"
+}
+
+###############################################
+# Displays version
+###############################################
+display_version() {
+  local exitValue=$1
+
+  "${COMPSS_HOME}Runtime/scripts/user/runcompss" --version
+
+  exit "$exitValue"
+}
+
+###############################################
+# Displays errors treating arguments
+###############################################
+display_error() {
+  local error_msg=$1
+
+  echo "$error_msg"
+  echo " "
+
+  usage 1
+}
+
+#---------------------------------------------------------------------------------------
+# MAIN FUNCTIONS
+#---------------------------------------------------------------------------------------
+
+###############################################
+# Get arguments
+###############################################
+get_args() {
+  # Avoid enqueue if there is no application
+  if [ $# -eq 0 ]; then
+    usage 1
+  fi
+
+  # Parse COMPSs Options
+  while getopts hvgtmdp-: flag; do
+    # Treat the argument
+    case "$flag" in
+      h)
+        # Display help
+        usage 0
+        ;;
+      v)
+        # Display version
+        display_version 0
+        ;;
+      -)
+        # Check more complex arguments
+        case "$OPTARG" in
+          help)
+            # Display help
+            usage 0
+            ;;
+          version)
+            # Display compss version
+            display_version 0
+            ;;
+          heterogeneous)
+	    heter=1
+	    ;;
+	  sc_cfg=*)
+	    sc_cfg=${OPTARG//sc_cfg=/}
+	    ;;
+          master_node=*)
+            # Master node is automatically selected. Remove it from COMPSs flags
+            echo "WARNING: master_node is automatically selected. Omitting parameter"
+            ;;
+          worker_nodes=*)
+            # Worker nodes are automatically selected. Remove it from COMPSs flags
+            echo "WARNING: worker_nodes are automatically selected. Omitting parameter"
+            ;;
+          *)
+	    # Flag didn't match any patern. Add to COMPSs
+	    args_pass="$args_pass --$OPTARG"
+	    ;;
+	esac
+	;;
+      *)
+	# Flag didn't match any patern. End of COMPSs flags
+	args_pass="$args_pass -$flag"
+	;;
+    esac
+  done
+  # Shift COMPSs arguments
+  shift $((OPTIND-1))
+
+  # Pass application name and args
+  args_pass="$args_pass $*"
+}
+
+###############################################
+# Checks arguments
+###############################################
+check_args() {
+  ###############################################################
+  # SC Configuration checks
+  ###############################################################
+  # Check sc configuration argument
+  if [ -z "${sc_cfg}" ]; then
+    sc_cfg=${DEFAULT_SC_CFG}
+  fi
+  
+  if [ -f "${sc_cfg}" ]; then
+     #sc_cfg is a file
+     local scCfgFullPath=${sc_cfg}  
+  else
+     #if not check if it is one of the already installed
+     if [[ ${sc_cfg} != *cfg ]]; then
+        # Add cfg suffix
+        sc_cfg=${sc_cfg}.cfg
+     fi
+
+     local scCfgFullPath="${COMPSS_HOME}Runtime/scripts/queues/supercomputers/${sc_cfg}"
+
+     if [ ! -f "${scCfgFullPath}" ]; then
+        # CFG file doesn't exist
+        display_error "${ERROR_CFG_SC}"
+     fi
+  fi
+
+  # Source SC CFG env
+  # shellcheck source=../queues/supercomputers/default.cfg
+  source "${scCfgFullPath}"
+
+  # Check queue configuration env
+  local queueCfgFullPath="${COMPSS_HOME}Runtime/scripts/queues/queue_systems/${QUEUE_SYSTEM}.cfg"
+  if [ ! -f "${queueCfgFullPath}" ]; then
+    # CFG file doesn't exist
+    display_error "${ERROR_CFG_Q}"
+  fi
+
+  # Source queue system CFG env
+  # shellcheck source=../queues/queue_systems/slurm.cfg
+  source "${queueCfgFullPath}"
+}
+
+
+#---------------------------------------------------
+# MAIN EXECUTION
+#---------------------------------------------------
+  # Get command args
+  get_args "$@"
+
+  # Check other command args
+  check_args
+
+  # Submit command
+  # shellcheck disable=SC2086
+  if [ -z "$heter" ]; then
+    "${COMPSS_HOME}Runtime/scripts/queues/commons/submit.sh" \
+       --sc_cfg=${sc_cfg} \
+       ${args_pass}
+  else
+    "${COMPSS_HOME}Runtime/scripts/queues/commons/heterogeneous_submit.sh" \
+       --sc_cfg=${sc_cfg} \
+       ${args_pass}
+  fi

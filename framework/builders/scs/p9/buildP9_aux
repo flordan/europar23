@@ -1,0 +1,80 @@
+#!/bin/bash -e
+
+  #############################################################
+  # Name: buildP9_aux
+  # Description: SCRIPT FOR LOCAL COMPSs BUILD in CTE-Power9
+  # Parameters: <targetDir> Base Target Installation folder
+  #
+  # ATTENTION: DO NOT EXECUTE THIS FILE. IT IS AUTOMATICALLY
+  #            EXECUTED FROM buildP9 script
+  #############################################################
+
+  usage() {
+    echo "Incorrect number of parameters"
+    echo " Usage: buildP9_aux <FullTargetPath>"
+    echo " "
+    exit 1
+  }
+
+  ####################
+  # MAIN
+  ####################
+  # Get parameters
+  if [ $# -ne 1 ]; then
+    usage
+  fi
+
+  # SET SCRIPT VARIABLES
+  targetDir=$1
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+  #######
+  # The earth department has its own python version and modules. Consequently,
+  # it is necessary to include in your .bashrc:
+  #    alias ocean='cd /gpfs/projects/bsc32/cs_collaboration/numba_ohc/parallel'
+  #    module use /gpfs/projects/bsc32/software/rhel/7.4/ppc64le/POWER9/modules/all/
+  #    module load iris
+  #    module load numba
+  #    export COMPSS_PYTHON_VERSION=none  # use your version
+  # Don't forget to include the module load just installed COMPSs.
+  # And also changhe de following variables in this script, that are currently "ignore":
+  #    - py_other_modules
+  #    - additional_module_use_folder
+  # Then you will be able to go to "ocean" alias where the collaboration code is.
+  #######
+
+  # DEFINE MODULES
+  modules="gcc/8.3.0 openmpi/4.0.1 boost java atlas/3.10.3 dlb/git papi/5.6.0 bsc/commands"
+  unload_before_python="ignore"
+  run_before_py3_modules="ignore"
+  # py3_modules="python/3.6.5"
+  py3_modules="python/3.8.2"
+  run_before_py3_other_modules="module load cuda/10.2 cudnn/7.6.4 nccl/2.4.8 tensorrt/6.0.1 openmpi/4.0.1 scalapack/2.0.2 fftw/3.3.8 szip/2.1.1 ffmpeg/4.2.1 opencv/4.1.1"
+  # py3_other_modules="python/3.7.4_ML python/3.8.2 python/3.9.0"
+  py3_other_modules="python/3.9.0"
+
+  # DEFINE CONFIGURATION PARAMETERS
+  #(Environment vars must be scaped to get the correct value if not it could take a value previous to load the modules)
+  # additionalExports="export BOOST_CPPFLAGS=-I\${BOOST_INCLUDE} PATH=/apps/CEPBATOOLS/deps/libxml2/2.9.4/bin:$PATH"
+  # additionalExports="export PATH=$PATH:/apps/JDK/SRC/jdk1.9.0_131 JAVA_HOME=/apps/JDK/SRC/jdk1.9.0_131"
+  additionalExports="export BOOST_CPPFLAGS=-I/apps/BOOST/1.66.0/include"
+  additional_module_use_folder="ignore"
+  #additional_module_use_folder="/gpfs/projects/bsc32/software/rhel/7.4/ppc64le/POWER9/modules/all/"
+  queues_cfg="p9.cfg"
+  extrae_with_openmpi="false"
+  openmpi_version=""
+  extrae_with_impi="false"
+  impi_version=""
+  autoparallel="false"
+  c_binding="true"
+
+  # CALL buildSC_aux
+  "${SCRIPT_DIR}"/buildSC_aux "${targetDir}" "${modules}" "${unload_before_python}" "${run_before_py3_modules}" "${py3_modules}" "${run_before_py3_other_modules}" "${py3_other_modules}" "${additionalExports}" "${additional_module_use_folder}" "${queues_cfg}" "${extrae_with_openmpi}" "${openmpi_version}" "${extrae_with_impi}" "${impi_version}" "${autoparallel}" "${c_binding}"
+  ev=$?
+
+  # End
+  if [ $ev -ne 0 ]; then
+    echo "ERROR: Exception in auxiliar script"
+    exit $ev
+  fi
+  exit 0

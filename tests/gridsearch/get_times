@@ -1,0 +1,28 @@
+#!/bin/bash
+
+log_dir="~/gridsearch/log/"
+
+cd "${log_dir}"
+for version in *; do
+  cd "${version}"
+  for nodes in *; do
+    cd "${nodes}"
+    if [ -d ".COMPSs" ]; then
+      cd ".COMPSs"
+      for exec_id in *; do
+         if [ ! "${exec_id}" == "*" ]; then
+           cd "${exec_id}"
+           master=$(ls | grep s[0-9]\*r[0-9]\*b[0-9]\* | sort| head -n1)
+           times=$(grep "GridSearch execution time" "${master}/jobs/job1_NEW.out" | sed 's/GridSearch execution time: //')
+           echo "${exec_id} ${version} ${times}"
+           cd ..
+         fi
+      done
+      cd ..
+    else
+      echo ".COMPSs no existeix"
+    fi
+    cd ..
+  done
+  cd ..
+done

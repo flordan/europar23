@@ -1,0 +1,1412 @@
+#!/bin/bash
+
+# Setting up COMPSs_HOME
+if [ -z "${COMPSS_HOME}" ]; then
+  COMPSS_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../../.. && pwd )/"
+fi
+if [ ! "${COMPSS_HOME: -1}" = "/" ]; then
+  COMPSS_HOME="${COMPSS_HOME}/"
+fi
+export COMPSS_HOME=${COMPSS_HOME}
+
+# shellcheck source=../system/runtime/tracing.sh
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/runtime/tracing.sh"
+# shellcheck source=../system/runtime/adaptors.sh
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/runtime/adaptors.sh"
+
+#---------------------------------------------------------------------------------------
+# SCRIPT CONSTANTS DECLARATION
+#---------------------------------------------------------------------------------------
+SHARED_DISK_NAME="shared_disk"
+LOCAL_DISK_NAME="local_disk"
+
+DEFAULT_SC_CFG="default"
+
+DEFAULT_AGENTS_HIERARCHY="tree"
+
+# Next default values need to be consistent with runcompss
+DEFAULT_LANGUAGE=java
+DEFAULT_LIBRARY_PATH=$(pwd)
+DEFAULT_APPDIR=$(pwd)
+DEFAULT_CLASSPATH=$(pwd)
+DEFAULT_PYTHONPATH=$(pwd)
+DEFAULT_DEBUG=off
+DEFAULT_LOG_LEVEL_ARG=debug
+DEFAULT_COMMUNICATION_ADAPTOR==${NIO_ADAPTOR}
+DEFAULT_TRACING="false"
+DEFAULT_CUSTOM_EXTRAE_FILE="null"
+DEFAULT_CUSTOM_EXTRAE_FILE_PYTHON="null"
+DEFAULT_MASTER_PORT_BASE=43000
+DEFAULT_MASTER_PORT_RAND_RANGE=1000
+DEFAULT_CPU_AFFINITY="automatic"
+DEFAULT_GPU_AFFINITY="automatic"
+DEFAULT_FPGA_AFFINITY="automatic"
+DEFAULT_FPGA_REPROGRAM=""
+DEFAULT_TASK_EXECUTION=compss
+DEFAULT_STORAGE_CONF=null
+DEFAULT_STREAMING="null"
+BASE_STREAMING_PORT=49049
+STREAMING_PORT_RAND_RANGE=100
+DEFAULT_PERSISTENT_WORKER_C=false
+DEFAULT_PYTHON_INTERPRETER=python3
+DEFAULT_PYTHON_VERSION=$( ${DEFAULT_PYTHON_INTERPRETER} -c "import sys; print(sys.version_info[:][0])" )
+if [ -z "${VIRTUAL_ENV}" ]; then
+  DEFAULT_PYTHON_VIRTUAL_ENVIRONMENT="null"
+else
+  DEFAULT_PYTHON_VIRTUAL_ENVIRONMENT="${VIRTUAL_ENV}"
+fi
+DEFAULT_PYTHON_PROPAGATE_VIRTUAL_ENVIRONMENT=true
+DEFAULT_PYTHON_MPI_WORKER=false
+DEFAULT_PYTHON_MEMORY_PROFILE=false
+DEFAULT_PYTHON_WORKER_CACHE=false
+DEFAULT_PYTHON_CACHE_PROFILER=true
+DEFAULT_JUPYTER_NOTEBOOK=false
+DEFAULT_JUPYTER_NOTEBOOK_PATH=$HOME
+
+DEFAULT_SCHEDULER=${LA_LOCALITY_SCHEDULER}
+
+#---------------------------------------------------------------------------------------
+# ERROR CONSTANTS DECLARATION
+#---------------------------------------------------------------------------------------
+
+ERROR_CFG_SC="SuperComputer CFG file doesn't exist"
+ERROR_CFG_Q="Queue system CFG file doesn't exist"
+ERROR_MASTER_NODE="Missing master node parameter"
+ERROR_WORKER_NODES="Missing worker nodes parameter"
+ERROR_NUM_CPUS="Invalid number of CPUS per node"
+ERROR_WORKER_WD="Invalid Worker Working Dir option"
+ERROR_NETWORK="Invalid network option"
+ERROR_WORKER_IN_MASTER_CPUS="Parameter worker_in_master_cpus is bigger than the maximum number of cpus_per_node"
+ERROR_WORKER_IN_MASTER_MEMORY="Incorrect worker_in_master_memory parameter. Only disabled or <int> allowed. I.e. 33000, 66000"
+ERROR_WORKER_IN_MASTER_MEMORY_TOO_HIGH="Parameter worker_in_master_memory exceeds the node_memory limit"
+ERROR_WORKER_IN_MASTER_MEMORY_NOT_SPECIFIED="Parameter worker_in_master_memory is mandatory if worker_in_master_cpus is not 0"
+ERROR_PROLOG_ACTION="Exception executing prolog action"
+ERROR_EPILOG_ACTION="Exception executing epilog action"
+ERROR_LANGUAGE="Value of option --lang must be: java, c or python"
+
+
+#---------------------------------------------------------------------------------------
+# GENERIC HELPER FUNCTIONS
+#---------------------------------------------------------------------------------------
+
+###############################################
+# Displays usage
+###############################################
+usage() {
+  local exitValue=$1
+
+  cat <<EOT
+Usage: $0 [options] application_name application_arguments
+
+* Options:
+  General:
+    --help, -h                              Print this help message
+
+    --opts                                  Show available options
+
+    --version, -v                           Print COMPSs version
+
+    --sc_cfg=<name>                         SuperComputer configuration file to use. Must exist inside queues/cfgs/
+                                            Mandatory
+                                            Default: ${DEFAULT_SC_CFG}
+
+    --master_node=<string>                  Node where to run the COMPSs Master
+                                            Mandatory
+
+    --worker_nodes="<string string...>"     Space separated nodes where to run the COMPSs Workers (Notice the quotes)
+                                            Mandatory
+
+  Launch configuration:
+EOT
+
+  show_opts "$exitValue"
+}
+
+###############################################
+# Show Options
+###############################################
+show_opts() {
+  local exitValue=$1
+
+  # Load default CFG for default values
+  local defaultSC_cfg="${COMPSS_HOME}/Runtime/scripts/queues/supercomputers/${DEFAULT_SC_CFG}.cfg"
+  # shellcheck source=../queues/supercomputers/default.cfg
+  # shellcheck disable=SC1091
+  source "${defaultSC_cfg}"
+  local defaultQS_cfg="${COMPSS_HOME}/Runtime/scripts/queues/queue_systems/${QUEUE_SYSTEM}.cfg"
+  # shellcheck source=../queues/queue_systems/slurm.cfg
+  # shellcheck disable=SC1091
+  source "${defaultQS_cfg}"
+
+  # Show usage
+  cat <<EOT
+    --hierarchy=<string>                    Hierarchy of agents for the deployment. Accepted values: plain|tree
+                                            Default: ${DEFAULT_AGENTS_HIERARCHY}
+
+    --cpus_per_node=<int>                   Available CPU computing units on each node
+                                            Default: ${DEFAULT_CPUS_PER_NODE}
+    --gpus_per_node=<int>                   Available GPU computing units on each node
+                                            Default: ${DEFAULT_GPUS_PER_NODE}
+    --fpgas_per_node=<int>                  Available FPGA computing units on each node
+                                            Default: ${DEFAULT_FPGAS_PER_NODE}
+    --fpga_reprogram="<string>              Specify the full command that needs to be executed to reprogram the FPGA with
+                                            the desired bitstream. The location must be an absolute path.
+                                            Default: ${DEFAULT_FPGA_REPROGRAM}
+    --max_tasks_per_node=<int>              Maximum number of simultaneous tasks running on a node
+                                            Default: ${DEFAULT_MAX_TASKS_PER_NODE}
+    --node_memory=<MB>                      Maximum node memory: disabled | <int> (MB)
+                                            Default: ${DEFAULT_NODE_MEMORY}
+    --network=<name>                        Communication network for transfers: default | ethernet | infiniband | data.
+                                            Default: ${DEFAULT_NETWORK}
+
+    --prolog="<string>"                     Task to execute before launching COMPSs (Notice the quotes)
+                                            If the task has arguments split them by "," rather than spaces.
+                                            This argument can appear multiple times for more than one prolog action
+                                            Default: Empty
+    --epilog="<string>"                     Task to execute after executing the COMPSs application (Notice the quotes)
+                                            If the task has arguments split them by "," rather than spaces.
+                                            This argument can appear multiple times for more than one epilog action
+                                            Default: Empty
+
+    --master_working_dir=<path>             Working directory of the application
+                                            Default: ${DEFAULT_JOB_EXECUTION_DIR}
+    --worker_working_dir=<name | path>      Worker directory. Use: ${LOCAL_DISK_NAME} | ${SHARED_DISK_NAME} | <path>
+                                            Default: ${DEFAULT_WORKER_WORKING_DIR}
+
+    --worker_in_master_cpus=<int>           Maximum number of CPU computing units that the master node can run as worker. Cannot exceed cpus_per_node.
+                                            Default: ${DEFAULT_WORKER_IN_MASTER_CPUS}
+    --worker_in_master_memory=<int> MB      Maximum memory in master node assigned to the worker. Cannot exceed the node_memory.
+                                            Mandatory if worker_in_master_cpus is specified.
+                                            Default: ${DEFAULT_WORKER_IN_MASTER_MEMORY}
+    --jvm_worker_in_master_opts="<string>"  Extra options for the JVM of the COMPSs Worker in the Master Node.
+                                            Each option separed by "," and without blank spaces (Notice the quotes)
+                                            Default: ${DEFAULT_JVM_WORKER_IN_MASTER}
+    --container_image=<path>                Runs the application by means of a container engine image
+                                            Default: Empty
+    --container_compss_path=<path>          Path where compss is installed in the container image
+                                            Default: /opt/COMPSs
+    --container_opts="<string>"             Options to pass to the container engine
+                                            Default: empty
+    --elasticity=<max_extra_nodes>          Activate elasticity specifiying the maximum extra nodes (ONLY AVAILABLE FORM SLURM CLUSTERS WITH NIO ADAPTOR)
+                                            Default: 0
+
+    --jupyter_notebook=<path>,              Swap the COMPSs master initialization with jupyter notebook from the specified path.
+    --jupyter_notebook                      Default: ${DEFAULT_JUPYTER_NOTEBOOK}
+
+  Runcompss configuration:
+
+EOT
+    "${COMPSS_HOME}/Runtime/scripts/user/runcompss" --opts
+
+  exit "$exitValue"
+}
+
+###############################################
+# Displays version
+###############################################
+display_version() {
+  local exitValue=$1
+
+  "${COMPSS_HOME}/Runtime/scripts/userruncompss" --version
+
+  exit "$exitValue"
+}
+
+###############################################
+# Displays errors when treating arguments
+###############################################
+display_error() {
+  local error_msg=$1
+
+  echo "$error_msg"
+  echo " "
+
+  usage 1
+}
+
+###############################################
+# Displays errors when executing actions
+###############################################
+action_error() {
+  local error_msg=$1
+
+  echo "$error_msg"
+  echo " "
+
+  exit 1
+}
+
+###############################################
+# Loads the tracing environment
+###############################################
+load_tracing_env() {
+  local module_tmp
+  if [[ "$OSTYPE" == "darwin"* ]]; then
+    module_tmp=$(mktemp -t /tmp)
+  else
+    module_tmp=$(mktemp -p /tmp)
+  fi
+  module list &> "${module_tmp}"
+
+  # Look for openmpi / impi / none
+  impi=$(grep -i "impi" "${module_tmp}" | cat)
+  openmpi=$(grep -i "openmpi" "${module_tmp}" | cat)
+
+  if [ ! -z "$impi" ]; then
+    # Load Extrae IMPI
+    export EXTRAE_HOME=${COMPSS_HOME}/Dependencies/extrae-impi/
+  elif [ ! -z "$openmpi" ]; then
+    # Load Extrae OpenMPI
+    export EXTRAE_HOME=${COMPSS_HOME}/Dependencies/extrae-openmpi/
+  else
+    # Load sequential extrae
+    export EXTRAE_HOME=${COMPSS_HOME}/Dependencies/extrae/
+  fi
+
+  # Clean tmp file
+  rm -f "${module_tmp}"
+}
+
+###############################################
+# Creates Agent CMD
+###############################################
+agent_cmd() {
+
+  if [ -z "${container_image}" ]; then
+    ACMD="${COMPSS_HOME}/Runtime/scripts/system/agents/launch_agent_cluster"
+  else
+    ACMD="singularity exec $container_opts $container_image ${COMPSS_HOME}/Runtime/scripts/system/agents/launch_agent_cluster"
+  fi
+
+  # WARNING: SETS GLOBAL SCRIPT VARIABLE MCMD
+
+
+  ACMD="${ACMD} ${@}"
+}
+
+
+
+#---------------------------------------------------------------------------------------
+# MAIN FUNCTIONS
+#---------------------------------------------------------------------------------------
+
+###############################################
+# Function to get the arguments
+###############################################
+get_args() {
+  # Avoid enqueue if there is no application
+  if [ $# -eq 0 ]; then
+    usage 1
+  fi
+
+  # Parse COMPSs Options
+  while getopts hvgtmdp-: flag; do
+    # Treat the argument
+    case "$flag" in
+      h)
+        # Display help
+        usage 0
+        ;;
+      v)
+        # Display version
+        display_version 0
+        ;;
+      d)
+        log_level=${DEFAULT_LOG_LEVEL_ARG}
+        #Keep it for runcompss (to add them to master)
+        ;;
+      t)
+        tracing=${TRACING_ENABLED}
+        #Keep it for runcompss (to add them to master)
+        args_pass="$args_pass -$flag"
+        ;;
+      -)
+      # Check more complex arguments
+      case "$OPTARG" in
+        help)
+          # Display help
+          usage 0
+          ;;
+        version)
+          # Display compss version
+          display_version 0
+          ;;
+        opts)
+          # Display options
+          show_opts 0
+          ;;
+        hierarchy=*)
+          agents_hierarchy=${OPTARG//hierarchy=/}
+          ;;
+        master_node=*)
+          master_node=${OPTARG//master_node=/}
+          ;;
+        worker_nodes=*)
+          worker_nodes=${OPTARG//worker_nodes=/}
+          ;;
+        resources=*)
+          resources=${OPTARG//resources=/}
+          ;;
+        sc_cfg=*)
+          sc_cfg=${OPTARG//sc_cfg=/}
+          ;;
+        cpus_per_node=*)
+          cpus_per_node=${OPTARG//cpus_per_node=/}
+          ;;
+        gpus_per_node=*)
+          gpus_per_node=${OPTARG//gpus_per_node=/}
+          ;;
+        fpgas_per_node=*)
+          fpgas_per_node=${OPTARG//fpgas_per_node=/}
+          ;;
+        max_tasks_per_node=*)
+          max_tasks_per_node=${OPTARG//max_tasks_per_node=}
+          ;;
+        cpu_affinity=*)
+          cpu_affinity=${OPTARG//cpu_affinity=}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        gpu_affinity=*)
+          gpu_affinity=${OPTARG//gpu_affinity=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        fpga_affinity=*)
+          fpga_affinity=${OPTARG//fpga_affinity=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        fpga_reprogram=*)
+          fpga_prog=${OPTARG//fpga_reprogram=/}
+          ;;
+        master_working_dir=*)
+          master_working_dir=${OPTARG//master_working_dir=/}
+          ;;
+        worker_working_dir=*)
+          worker_working_dir=${OPTARG//worker_working_dir=/}
+          ;;
+        worker_in_master_cpus=*)
+          worker_in_master_cpus=${OPTARG//worker_in_master_cpus=/}
+          ;;
+        worker_in_master_memory=*)
+          worker_in_master_memory=${OPTARG//worker_in_master_memory=/}
+          ;;
+        node_memory=*)
+          node_memory=${OPTARG//node_memory=/}
+          ;;
+        node_storage_bandwidth=*)
+          node_storage_bw=${OPTARG//node_storage_bandwidth=/}
+          ;;
+        network=*)
+          network=${OPTARG//network=/}
+          ;;
+        lang=*)
+          lang=${OPTARG//lang=/}
+          # Keep it for Call  (to add them to master)
+          call_options="$call_options --$OPTARG"
+          ;;
+        streaming=*)
+          streaming=${OPTARG//streaming=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        streaming_master_port=*)
+          streaming_master_port=${OPTARG//streaming_master_port=/}
+          # Keep the argument because we will overwrite it
+          ;;
+        library_path=*)
+          library_path=${OPTARG//library_path=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        classpath=*)
+          cp=${OPTARG//classpath=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        pythonpath=*)
+          pythonpath=${OPTARG//pythonpath=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        appdir=*)
+          appdir=${OPTARG//appdir=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        log_level=*)
+          log_level=${OPTARG//log_level=/}
+          # Keep it for runcompss (to add them to master)
+          ;;
+        debug)
+          log_level=${DEFAULT_LOG_LEVEL_ARG}
+          # Keep it for runcompss (to add them to master)
+          ;;
+        tracing=*)
+          tracing=${OPTARG//tracing=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        tracing)
+          tracing=${TRACING_ENABLED}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        trace_label=*)
+          trace_label=${OPTARG//trace_label=/}
+          ;;
+        extrae_config_file=*)
+          custom_extrae_file=${OPTARG//extrae_config_file=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        extrae_config_file_python=*)
+          custom_extrae_config_file_python=${OPTARG//extrae_config_file_python=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        comm=*)
+          comm=${OPTARG//comm=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        jvm_master_opts=*)
+          jvm_master_opts=${OPTARG//jvm_master_opts=/}
+          ;;
+        jvm_workers_opts=*)
+          jvm_workers_opts=${OPTARG//jvm_workers_opts=/}
+          ;;
+        jvm_worker_in_master_opts=*)
+          jvm_worker_in_master_opts=${OPTARG//jvm_worker_in_master_opts=/}
+          ;;
+        storage_conf=*)
+          storage_conf=${OPTARG//storage_conf=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        task_execution=*)
+          taskExecution=${OPTARG//task_execution=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        persistent_worker_c=*)
+          persistent_worker_c=${OPTARG//persistent_worker_c=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        python_interpreter=*)
+          python_interpreter=${OPTARG//python_interpreter=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        python_propagate_virtual_environment=*)
+          python_propagate_virtual_environment=${OPTARG//python_propagate_virtual_environment=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        python_mpi_worker=*)
+          python_mpi_worker=${OPTARG//python_mpi_worker=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        python_memory_profile)
+          python_memory_profile=true
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        python_worker_cache=*)
+          python_worker_cache=${OPTARG//python_worker_cache=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        python_cache_profiler=*)
+          python_cache_profiler=${OPTARG//python_cache_profiler=/}
+          # Keep it for runcompss (to add them to master)
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        prolog=*)
+          action=${OPTARG//prolog=/}
+          prologActions[numPrologActions]="$action"
+          numPrologActions=$((numPrologActions + 1))
+          ;;
+        epilog=*)
+          action=${OPTARG//epilog=/}
+          epilogActions[numEpilogActions]="$action"
+          numEpilogActions=$((numEpilogActions + 1))
+          ;;
+        uuid=*)
+          # Modified for heterogeneity
+          uuid=${OPTARG//uuid=/}
+          ;;
+        specific_log_dir=*)
+          # Specific log dir is automatically generated by launch_compss.sh. Remove it from COMPSs flags
+          echo "WARNING: specific_log_dir is automatically generated. Omitting parameter. Define log_dir instead."
+          ;;
+        log_dir=*)
+          # Log dir is automatically generated by launch_compss.sh. Remove it from COMPSs flags
+          # echo "WARNING: log_dir is automatically generated. Omitting parameter"
+          log_dir=${OPTARG//log_dir=/}
+          ;;
+        master_name=*)
+          # Master name is automatically generated by launch_compss.sh. Remove it from COMPSs flags
+          echo "WARNING: master_name is automatically generated. Omitting parameter"
+          ;;
+        master_port=*)
+          # Remove from runcompss since launcher will add it
+          master_port=${OPTARG//master_port=/}
+          ;;
+        container_image=*)
+          container_image=${OPTARG//container_image=/}
+          ;;
+        container_compss_path=*)
+          container_compss_path=${OPTARG//container_compss_path=/}
+          ;;
+        container_opts=*)
+          container_opts=${OPTARG//container_opts=/}
+          ;;
+        elasticity=*)
+          elasticity=${OPTARG//elasticity=/}
+          args_pass="$args_pass --conn=es.bsc.compss.connectors.DefaultNoSSHConnector"
+          ;;
+        queue=*)
+          # Added for elasticity
+          queue=${OPTARG//queue=/}
+          ;;
+        reservation=*)
+          # Added for elasticity
+          reservation=${OPTARG//reservation=/}
+          ;;
+        qos=*)
+          # Added for elasticity
+          qos=${OPTARG//qos=/}
+          ;;
+        cpus_per_task)
+          cpus_per_task="true"
+          ;;
+        constraints=*)
+          # Added for elasticity
+          constraints=${OPTARG//constraints=/}
+          ;;
+        licenses=*)
+          # Added for lenox/slurm
+          licenses=${OPTARG//licenses=/}
+          ;;
+        jupyter_notebook)
+          jupyter_notebook=true
+          jupyter_notebook_path=${DEFAULT_JUPYTER_NOTEBOOK_PATH}
+          ;;
+        jupyter_notebook=*)
+          jupyter_notebook=true
+          jupyter_notebook_path=${OPTARG//jupyter_notebook=/}
+          ;;
+        xmls_phase=*)
+          # Added for heterogeneity
+          xmls_phase=${OPTARG//xmls_phase=/}
+          ;;
+        xmls_suffix=*)
+          # Added for heterogeneity
+          xmls_suffix=${OPTARG//xmls_suffix=/}
+          ;;
+        initial_hostid=*)
+          # Added for tracing in heterogeneity
+          initial_hostid=${OPTARG//initial_hostid=/}
+          ;;
+        scheduler=*)
+          # Added for tracing in heterogeneity
+          scheduler="${OPTARG//scheduler=/}"
+          args_pass="$args_pass --$OPTARG"
+          ;;
+        *)
+          # Flag didn't match any patern. Add to COMPSs
+          call_options="${call_options} --$OPTARG"
+          ;;
+      esac
+      ;;
+    *)
+      # Flag didn't match any patern. End of COMPSs flags
+      call_options="${call_options} -$flag"
+      ;;
+    esac
+  done
+
+  # Shift COMPSs arguments
+  shift $((OPTIND-1))
+
+  fullAppPath=$1
+  app_args="$*"
+}
+
+###############################################
+# Function to check the arguments
+###############################################
+check_args() {
+  #
+  # SC Configuration checks
+  #
+  # Check sc configuration argument
+  if [ -z "${sc_cfg}" ]; then
+    sc_cfg=${DEFAULT_SC_CFG}
+  fi
+
+  if [ -f "${sc_cfg}" ]; then
+     #sc_cfg is a file
+     local scCfgFullPath=${sc_cfg}
+  else
+     #if not check if it is one of the already installed
+     if [[ ${sc_cfg} != *cfg ]]; then
+        # Add cfg suffix
+        sc_cfg=${sc_cfg}.cfg
+     fi
+
+     local scCfgFullPath="${COMPSS_HOME}/Runtime/scripts/queues/supercomputers/${sc_cfg}"
+
+     if [ ! -f "${scCfgFullPath}" ]; then
+        # CFG file doesn't exist
+        display_error "${ERROR_CFG_SC}"
+     fi
+  fi
+
+  # Source SC CFG env
+  # shellcheck source=../queues/supercomputers/default.cfg
+  # shellcheck disable=SC1091
+  source "${scCfgFullPath}"
+
+  # Check queue configuration env
+  local queueCfgFullPath="${COMPSS_HOME}/Runtime/scripts/queues/queue_systems/${QUEUE_SYSTEM}.cfg"
+  if [ ! -f "${queueCfgFullPath}" ]; then
+    # CFG file doesn't exist
+    display_error "${ERROR_CFG_Q}"
+  fi
+
+  # Source queue system CFG env
+  # shellcheck source=../queues/queue_systems/slurm.cfg
+  # shellcheck disable=SC1091
+  source "${queueCfgFullPath}"
+
+  #
+  # Infrastructure checks
+  #
+  # Changed error by warning because in heterogeneous there can be a launch of just workers
+  if [ -z "${master_node}" ]; then
+    echo "${ERROR_MASTER_NODE}"
+  fi
+
+  if [ -z "${network}" ]; then
+    network=${DEFAULT_NETWORK}
+  elif [ "${network}" == "default" ]; then
+    network=${DEFAULT_NETWORK}
+  elif [ "${network}" != "ethernet" ] && [ "${network}" != "infiniband" ] && [ "${network}" != "data" ]; then
+    display_error "${ERROR_NETWORK}"
+  fi
+
+  if [ -z "${storage_conf}" ]; then
+    storage_conf=${DEFAULT_STORAGE_CONF}
+  fi
+
+  if [ -z "${taskExecution}" ]; then
+    taskExecution=${DEFAULT_TASK_EXECUTION}
+  fi
+
+  if [ -z "${persistent_worker_c}" ]; then
+    persistent_worker_c=${DEFAULT_PERSISTENT_WORKER_C}
+  fi
+
+  if [ -z "${python_interpreter}" ]; then
+    python_interpreter=${DEFAULT_PYTHON_INTERPRETER}
+    python_version=${DEFAULT_PYTHON_VERSION}
+  else
+    python_version=$( ${python_interpreter} -c "import sys; print(sys.version_info[:][0])" )
+  fi
+
+  if [ -z "${python_propagate_virtual_environment}" ]; then
+    python_propagate_virtual_environment=${DEFAULT_PYTHON_PROPAGATE_VIRTUAL_ENVIRONMENT}
+  fi
+
+  if [ -z "${python_mpi_worker}" ]; then
+    python_mpi_worker=${DEFAULT_PYTHON_MPI_WORKER}
+  fi
+
+  if [ -z "${python_memory_profile}" ]; then
+    python_memory_profile=${DEFAULT_PYTHON_MEMORY_PROFILE}
+  fi
+
+  if [ -z "${python_worker_cache}" ]; then
+    python_worker_cache=${DEFAULT_PYTHON_WORKER_CACHE}
+  fi
+
+  if [ -z "${python_cache_profiler}" ]; then
+    python_cache_profiler=${DEFAULT_PYTHON_CACHE_PROFILER}
+  fi
+
+  cache_supported=$($python_interpreter -c "import sys; print('true' if sys.version_info >= (3, 8) else 'false')")
+  if [ "${cache_supported}" == "false" ]; then
+    if [ "${python_worker_cache}" == "true" ]  || [ "${python_cache_profiler}" == "true" ]; then
+      echo "WARNING: Can not enable python worker cache."
+      python_worker_cache="false"
+      python_cache_profiler="false"
+    fi
+  fi
+
+  if [ "${python_cache_profiler}" == "true" ]; then
+    if [ "${python_worker_cache}" == "false" ]; then
+      python_cache_profiler="false"
+    fi
+  fi
+
+  if [ -z "${scheduler}" ]; then
+    scheduler="${DEFAULT_SCHEDULER}"
+  fi
+
+  #
+  # Node checks
+  #
+  if [ -z "${max_tasks_per_node}" ]; then
+    max_tasks_per_node=${DEFAULT_MAX_TASKS_PER_NODE}
+  fi
+
+  if [ -z "${cpus_per_node}" ]; then
+    cpus_per_node=${DEFAULT_CPUS_PER_NODE}
+  fi
+
+  if [ "${cpus_per_node}" -lt "${MINIMUM_CPUS_PER_NODE}" ]; then
+    display_error "${ERROR_NUM_CPUS}"
+  fi
+
+  if [ -z "${gpus_per_node}" ]; then
+    gpus_per_node=${DEFAULT_GPUS_PER_NODE}
+  fi
+
+  if [ -z "${fpgas_per_node}" ]; then
+    fpgas_per_node=${DEFAULT_FPGAS_PER_NODE}
+  fi
+
+  if [ -z "${cpu_affinity}" ]; then
+    cpu_affinity=${DEFAULT_CPU_AFFINITY}
+  fi
+
+  if [ -z "${gpu_affinity}" ]; then
+    gpu_affinity=${DEFAULT_GPU_AFFINITY}
+  fi
+
+  if [ -z "${fpga_affinity}" ]; then
+    fpga_affinity=${DEFAULT_FPGA_AFFINITY}
+  fi
+
+  if [ -z "${fpga_prog}" ]; then
+    fpga_prog=${DEFAULT_FPGA_REPROGRAM}
+  fi
+
+  if [ -z "${node_memory}" ]; then
+    node_memory=${DEFAULT_NODE_MEMORY}
+  fi
+
+  if [ -z "${node_storage_bw}" ]; then
+    node_storage_bw=${DEFAULT_NODE_STORAGE_BANDWIDTH}
+  fi
+
+  if [ -z "${worker_in_master_cpus}" ]; then
+    worker_in_master_cpus=${DEFAULT_WORKER_IN_MASTER_CPUS}
+  fi
+  if [ "${worker_in_master_cpus}" -gt "${cpus_per_node}" ]; then
+    display_error "${ERROR_WORKER_IN_MASTER_CPUS}"
+  fi
+
+  if [ -z "${worker_in_master_memory}" ]; then
+    worker_in_master_memory=${DEFAULT_WORKER_IN_MASTER_MEMORY}
+  elif [ "${worker_in_master_memory}" != "disabled" ] && ! [[ "${worker_in_master_memory}" =~ ^[0-9]+$ ]]; then
+    display_error "${ERROR_WORKER_IN_MASTER_MEMORY}"
+  fi
+  if [ "${worker_in_master_memory}" != "${DEFAULT_WORKER_IN_MASTER_MEMORY}" ] && [ "${node_memory}" != "${DEFAULT_NODE_MEMORY}" ]; then
+    if [ "${worker_in_master_memory}" -gt "${node_memory}" ]; then
+      display_error "${ERROR_WORKER_IN_MASTER_MEMORY_TOO_HIGH} ${worker_in_master_memory} < ${node_memory} "
+    fi
+  fi
+
+  if [ "${worker_in_master_cpus}" -gt 0 ] && [ "${worker_in_master_memory}" -le 0 ]; then
+    display_error "${ERROR_WORKER_IN_MASTER_MEMORY_NOT_SPECIFIED}"
+  fi
+
+  # Check worker nodes and calculate number of workers
+  if [ -z "${worker_nodes}" ]; then
+    if [ "${worker_in_master_cpus}"  -lt "1" ]; then
+      display_error "${ERROR_WORKER_NODES}"
+    else
+      worker_nodes=""
+      total_num_workers=1
+    fi
+  else
+    local words=( ${worker_nodes} )
+    total_num_workers=${#words[@]}
+    if [ "${worker_in_master_cpus}" -gt "0" ]; then
+      total_num_workers=$((total_num_workers+1))
+    fi
+  fi
+
+  if [ -z "${master_port}" ]; then
+    rand_num=$RANDOM
+    offset=$((rand_num % DEFAULT_MASTER_PORT_RAND_RANGE))
+    master_port=$((DEFAULT_MASTER_PORT_BASE + offset))
+  fi
+
+  while [ "$(netstat | grep TIME_WAIT | grep -c ${master_port})" -gt 0 ] || [ ! -z "$(lsof -i :${master_port})" ]; do
+    echo "Port ${master_port} is already in use or time_wait, incrementing port by 1"
+    master_port=$((master_port+1))
+  done
+
+  #
+  # Working Directory Checks
+  #
+  if [ -z "${master_working_dir}" ]; then
+    master_working_dir=${DEFAULT_JOB_EXECUTION_DIR}
+  fi
+
+  if [ -z "${worker_working_dir}" ]; then
+    worker_working_dir=${DEFAULT_WORKER_WORKING_DIR}
+  elif [ "${worker_working_dir}" != "${LOCAL_DISK_NAME}" ] && [ "${worker_working_dir}" != "${SHARED_DISK_NAME}" ] && [[ ${worker_working_dir} != /* ]]; then
+    display_error "${ERROR_WORKER_WD}"
+  fi
+
+  #
+  # JVM Checks
+  #
+  if [ -z "${jvm_master_opts}" ]; then
+    jvm_master_opts=${DEFAULT_JVM_MASTER}
+  fi
+  jvm_master_opts=${jvm_master_opts//\"/}
+
+  if [ -z "${jvm_workers_opts}" ]; then
+    jvm_workers_opts=${DEFAULT_JVM_WORKERS}
+  fi
+  jvm_workers_opts=${jvm_workers_opts//\"/}
+
+  if [ -z "${jvm_worker_in_master_opts}" ] && [ -n "${worker_in_master_cpus}" ]; then
+    jvm_worker_in_master_opts=${DEFAULT_JVM_WORKER_IN_MASTER}
+  fi
+  jvm_worker_in_master_opts=${jvm_worker_in_master_opts//\"/}
+
+  #
+  # Runtime and Tools Checks
+  #
+  if [ -z "${log_level}" ]; then
+    log_level=${DEFAULT_DEBUG}
+  fi
+
+  if [ -z "${comm}" ]; then
+    comm=${DEFAULT_COMMUNICATION_ADAPTOR}
+  fi
+
+  if [ -z "${tracing}" ]; then
+    tracing=${DEFAULT_TRACING}
+  fi
+
+  if [ -z "${trace_label}" ]; then
+    trace_label=${total_num_workers}workers_${cpus_per_node}cpus_${!ENV_VAR_JOB_ID}
+  fi
+
+  if [ -z "${custom_extrae_file}" ]; then
+    custom_extrae_file=${DEFAULT_CUSTOM_EXTRAE_FILE}
+  fi
+
+  if [ -z "${custom_extrae_config_file_python}" ]; then
+    custom_extrae_config_file_python=${DEFAULT_CUSTOM_EXTRAE_FILE_PYTHON}
+  fi
+
+  if [ -z "${jupyter_notebook}" ]; then
+    jupyter_notebook=${DEFAULT_JUPYTER_NOTEBOOK}
+    jupyter_notebook_path=${DEFAULT_JUPYTER_NOTEBOOK_PATH}
+  fi
+
+  #
+  # Application Checks
+  #
+
+  # Library path
+  if [ -z "${library_path}" ]; then
+    library_path=${DEFAULT_LIBRARY_PATH}
+  fi
+
+  # Classpath
+  if [ -z "$cp" ]; then
+    cp=${DEFAULT_CLASSPATH}
+  else
+    fcp=""
+    for currcp in ${cp//:/$'\n'}; do
+    if [ ! "${currcp:0:1}" == '/' ]; then              # Relative paths to abs
+      if [ -d "$currcp" ] || [ -f "$currcp" ]; then  # If the dir/file exists
+        absdir="$(cd "$(dirname "$currcp")" && pwd)" # Get absolute dir
+        file="$(basename "$currcp")"
+        currcp="$absdir/$file"
+      else
+        echo "[ WARNING ]: Classpath \"$currcp\" does not exist..."
+      fi
+    fi
+    fcp="${fcp}:$currcp"
+    done
+    cp="$(echo "$fcp" | cut -c2-)"
+  fi
+
+  # Pythonpath
+  if [ -z "$pythonpath" ]; then
+    pythonpath=${DEFAULT_PYTHONPATH}
+  fi
+
+  # AppDir
+  if [ -z "$appdir" ]; then
+    appdir=${DEFAULT_APPDIR}
+  fi
+
+  # Streaming
+  if [ -z "${streaming}" ]; then
+    streaming=${DEFAULT_STREAMING}
+  fi
+  if [ "${streaming}" != "null" ] && [ "${streaming}" != "NONE" ]; then
+    if [ -z "${streaming_master_port}" ]; then
+      streaming_master_port=$((BASE_STREAMING_PORT + RANDOM % STREAMING_PORT_RAND_RANGE))
+    fi
+  else
+    streaming_master_port="null"
+  fi
+
+  if [[ "${fullAppPath}" == "*.py" ]]; then
+    echo "[ WARNING ]: The python module to be executed ends in \".py\" this is probably an error so it's getting ignored"
+    fullAppPath=${fullAppPath:0:-3} #drop the last 3 characters
+  fi
+}
+
+
+###############################################
+# Sets job variables
+###############################################
+set_variables() {
+  # Set script variables
+  if [ -z "${container_image}" ]; then
+    export COMPSS_HOME=${COMPSS_HOME}
+    export GAT_LOCATION=${COMPSS_HOME}/Dependencies/JAVA_GAT
+    worker_install_dir=${COMPSS_HOME}
+  else
+    if [ -z "${container_compss_path}" ]; then
+      export COMPSS_HOME=/opt/COMPSs/
+      export GAT_LOCATION=/opt/COMPSs/Dependencies/JAVA_GAT
+      worker_install_dir=/opt/COMPSs
+    else
+      export COMPSS_HOME=${container_compss_path}/
+      export GAT_LOCATION=${container_compss_path}/Dependencies/JAVA_GAT
+      worker_install_dir=${container_compss_path}/
+    fi
+  fi
+
+  # Create .COMPSs log dir for application execution
+  if [ -z "${log_dir}" ]; then
+        log_dir=$HOME
+  fi
+  specific_log_dir=${log_dir}/.COMPSs/${!ENV_VAR_JOB_ID}/
+  mkdir -p "${specific_log_dir}"
+
+  # SharedDisk variables
+  if [ "${worker_working_dir}" == "${SHARED_DISK_NAME}" ]; then
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      worker_working_dir=$(mktemp -d -t "${SHARED_DISK_PREFIX}${HOME}")
+    else
+      worker_working_dir=$(mktemp -d -p "${SHARED_DISK_PREFIX}${HOME}")
+    fi
+  elif [ "${worker_working_dir}" == "${LOCAL_DISK_NAME}" ]; then
+    worker_working_dir=${LOCAL_DISK_PREFIX}/${!ENV_VAR_JOB_ID}
+    mkdir -p "${worker_working_dir}"
+  else
+    # The working dir is a custom absolute path, create tmp
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+      worker_working_dir=$(mktemp -d -t "${worker_working_dir}")
+    else
+      worker_working_dir=$(mktemp -d -p "${worker_working_dir}")
+    fi
+  fi
+
+  # Network variables
+  if [ "${network}" == "ethernet" ]; then
+    network=""
+  elif [ "${network}" == "infiniband" ]; then
+    network=${NETWORK_INFINIBAND_SUFFIX}
+  elif [ "${network}" == "data" ]; then
+    network=${NETWORK_DATA_SUFFIX}
+  fi
+
+
+  # Memory variables
+  if [ "${node_memory}" == "${DEFAULT_NODE_MEMORY}" ]; then
+    # Default value
+    node_memory=${DEFAULT_NODE_MEMORY_SIZE}
+  else
+    # Change from MB to GB
+    node_memory=$(( node_memory / 1024 - 4))
+  fi
+
+  if [ "${worker_in_master_memory}" == "${DEFAULT_WORKER_IN_MASTER_MEMORY}" ]; then
+    # Default value
+    worker_in_master_memory=${DEFAULT_NODE_MEMORY_SIZE}
+  else
+    # Change from MB to GB
+    worker_in_master_memory=${DEFAULT_NODE_MEMORY_SIZE}
+  fi
+
+  # Load tracing and debug only for NIO
+  if [ "${comm/NIO}" != "${comm}" ]; then
+    # Adapting tracing flag to worker tracing level
+    if [ "${tracing}" == "${TRACING_ENABLED}" ]; then
+        load_tracing_env
+    fi
+
+    # Adapt debug flag to worker script
+    if [ "${log_level}" == "debug" ] || [ "${log_level}" == "trace" ]; then
+      debug="true"
+    else
+      debug="false"
+    fi
+  fi
+
+  if [ -z "${uuid}" ]; then
+    # Generate a UUID for workers and runcompss
+    uuid=$(cat /proc/sys/kernel/random/uuid)
+  fi
+}
+
+###############################################
+# Log execution variables
+###############################################
+log_variables() {
+  echo "-------- Launch arguments --------"
+  echo "Agents hierarchy:          ${agents_hierarchy}"
+  echo "Master:                    ${master_node}"
+  echo "Workers:                   ${worker_nodes}"
+  echo "Tasks per Node:            ${max_tasks_per_node}"
+  echo "CPUs per Node:             ${cpus_per_node}"
+  echo "GPUs per Node:             ${gpus_per_node}"
+  echo "FPGAs per Node:            ${fpgas_per_node}"
+  echo "CPU Affinity:              ${cpu_affinity}"
+  echo "GPU Affinity:              ${gpu_affinity}"
+  echo "FPGA Affinity:             ${fpga_affinity}"
+  echo "FPGA reprogram command:    ${fpga_prog}"
+  echo "Network:                   ${network}"
+  echo "Worker in Master CPUs:     ${worker_in_master_cpus}"
+  echo "Worker in Master Memory:   ${worker_in_master_memory}"
+  echo "Master Port:               ${master_port}"
+  echo "Master WD:                 ${master_working_dir}"
+  echo "Worker WD:                 ${worker_working_dir}"
+  echo "Worker ID:                 ${worker_install_dir}"
+  echo "Master JVM Opts:           ${jvm_master_opts}"
+  echo "Workers JVM Opts:          ${jvm_workers_opts}"
+  echo "Worker in Master JVM Opts: ${jvm_worker_in_master_opts}"
+  echo "Streaming Backend:         ${streaming}"
+  echo "Streaming Master Port:     ${streaming_master_port}"
+  echo "Library Path:              ${library_path}"
+  echo "Classpath:                 ${cp}"
+  echo "Pythonpath:                ${pythonpath}"
+  echo "Appdir:			               ${appdir}"
+  echo "Lang:                      ${lang}"
+  echo "Python Interpreter:        ${python_interpreter}"
+  echo "Python version:            ${python_version}"
+  echo "Python virtual env:        ${DEFAULT_PYTHON_VIRTUAL_ENVIRONMENT}"
+  echo "Python propagate virt env. ${python_propagate_virtual_environment}"
+  echo "Python extrae config file  ${custom_extrae_config_file_python}"
+  echo "Python use MPI worker      ${python_mpi_worker}"
+  echo "Python memory profile      ${python_memory_profile}"
+  echo "Python worker cache        ${python_worker_cache}"
+  echo "Python worker cache        ${python_cache_profiler}"
+  echo "COMM:                      ${comm}"
+  echo "Prolog:                    ${prologActions[*]}"
+  echo "Epilog:                    ${epilogActions[*]}"
+  echo "Storage conf:              ${storage_conf}"
+  echo "Task execution:            ${taskExecution}"
+  echo "To COMPSs:                 ${args_pass}"
+  echo "-----------------------------------"
+  echo " "
+}
+
+
+###############################################
+# Write usage to log file
+###############################################
+write_log_usage() {
+  # Create file with header if required
+  local log_usage_file="${COMPSS_HOME}/usage.log"
+  if [ ! -f "${log_usage_file}" ]; then
+    echo -e "USAGE DATE\\t\\t\\tUSER" > "${log_usage_file}"
+  fi
+
+  # Write usage message
+  msg="$(date)\\t$(whoami)"
+  echo -e "$msg" >> "${log_usage_file}"
+
+  # Ensure file is public
+  chmod 777 "${log_usage_file}"
+}
+
+
+###############################################
+# Launches the application
+###############################################
+launch_agent () {
+  local node_name=$1
+
+  local jvm_opts_str
+  local jvm_opts_size
+  jvm_opts_str=$(echo "${jvm_workers_opts_str}" | tr "," " ")
+  jvm_opts_size=$(echo "${jvm_workers_opts_str}" | wc -w)
+  fpga_reprogram_str=$(echo "${fpga_prog}" | tr "," " ")
+  fpga_reprogram_size=$(echo "${fpga_prog}" | wc -w)
+  workers_size=$(echo "${worker_nodes}" | wc -w)
+
+  agent_cmd \
+  "${node_name}" \
+  "${master_node}" \
+  "${workers_size}" \
+  "${worker_nodes}" \
+  "--network=${network}" \
+  "${agents_hierarchy}" \
+  "${specific_log_dir}${node_name}"\
+  "${!ENV_VAR_JOB_ID}_${node_name}" \
+  "${worker_in_master_cpus}" \
+  "${cpus_per_node}" \
+  "${cpu_affinity}" \
+  "${gpus_per_node}" \
+  "${gpu_affinity}" \
+  "${fpgas_per_node}" \
+  "${fpga_affinity}" \
+  "${worker_in_master_memory}" \
+  "${node_memory}"\
+  "${node_storage_bw}" \
+  "${worker_working_dir}" \
+  "${worker_install_dir}" \
+  "${max_tasks_per_node}" \
+  "--log_level=${log_level}" \
+  "--log_dir=${specific_log_dir}${node_name}" \
+  ${args_pass}
+
+  if [ ! -z "${NODE_NAME_QUEUE}" ]; then
+      node=$(${NODE_NAME_QUEUE} ${node})
+  fi
+
+  if [ -n "${cpus_per_task}" ] && [ "${cpus_per_task}" == "true" ]; then
+      if [ -n "${cpus_per_node}" ] && [ "${cpus_per_node}" != "0" ]; then
+          AUXILIAR_LAUNCH_PARAMS="${QARG_CPUS_PER_TASK} ${cpus_per_node} "
+      fi
+  fi
+
+  ACMD="${LAUNCH_CMD} ${AUXILIAR_LAUNCH_PARAMS}${LAUNCH_PARAMS}${LAUNCH_SEPARATOR}${node_name} ${ACMD}"
+  echo ${ACMD}
+  $ACMD&
+}
+
+launch() {
+  echo "------ Launching Agents ------"
+
+  # Launch workers separately if they are persistent
+  # Start workers' processes
+  local hostid=1
+  if [ ! -z "${initial_hostid}" ]; then
+    echo "Host id set to ${initial_hostid}"
+    hostid=${initial_hostid}
+  fi
+
+  local jvm_workers_opts_str
+  local jvm_workers_opts_size
+  jvm_workers_opts_str=$(echo "${jvm_workers_opts}" | tr "," " ")
+  jvm_workers_opts_size=$(echo "${jvm_workers_opts_str}" | wc -w)
+  fpga_reprogram_str=$(echo "${fpga_prog}" | tr "," " ")
+  fpga_reprogram_size=$(echo "${fpga_prog}" | wc -w)
+
+  launch_agent ${master_node}
+  hostid=$((hostid+1))
+
+  if [ ! -z "${worker_nodes}" ]; then
+    for node in ${worker_nodes}; do
+      launch_agent ${node}
+      hostid=$((hostid+1))
+    done
+  fi
+
+  echo "Wait until master is awake..."
+  while [ true ]; do
+    sleep 1
+    curl -s -XGET http://${master_node}${network}:46101/COMPSs/test # 2>/dev/null
+    if [ $? -eq 0 ]; then
+      break;
+    fi
+  done
+  echo "Master is up and running"
+
+  num_agents=$(wc -w <<< "${worker_nodes}")
+  echo "Wait until all workers are awake..."
+  CONFIRMED_AGENTS=0
+  forward_stop_to=""
+  while [ ${CONFIRMED_AGENTS} -lt ${num_agents} ]; do
+    sleep 1
+    forward_stop_to=""
+    CONFIRMED_AGENTS=0
+    for worker in ${worker_nodes}; do
+      curl -s -XGET http://${worker}${network}:46101/COMPSs/test # 2>/dev/null
+      if [ $? -eq 0 ]; then
+        CONFIRMED_AGENTS=$(( CONFIRMED_AGENTS + 1))
+      fi
+      if [ -n "${forward_stop_to}" ]; then
+        forward_stop_to="${forward_stop_to};"
+      fi
+      forward_stop_to="${forward_stop_to}${worker}${network}:46101"
+    done
+  done
+  echo "All nodes are ready"
+
+  curl -s -XGET http://${master_node}${network}:46101/COMPSs/printResources # 2>/dev/null
+  for worker in ${worker_nodes}; do
+    curl -s -XGET http://${worker}${network}:46101/COMPSs/printResources # 2>/dev/null
+  done
+
+
+  if [ "${lang}" == "java" ] || [ "${lang}" == "JAVA" ]; then
+    cei="--cei=${fullAppPath}Itf"
+  fi
+
+  echo "------ Launching Execution ------"
+  # Calling main method of the application passing in a single parameter containing an array with the method arguments
+  echo "${COMPSS_HOME}/Runtime/scripts/user/compss_agent_call_operation" --master_node=${master_node}${network} --master_port=46101 --stop "--forward_to=${forward_stop_to}" ${cei} ${call_options} ${app_args}
+  "${COMPSS_HOME}/Runtime/scripts/user/compss_agent_call_operation" "--master_node=${master_node}${network}" "--master_port=46101"  "--stop" "--forward_to=${forward_stop_to}" ${cei} ${call_options} ${app_args}
+}
+
+###############################################
+# Prolog actions
+###############################################
+prolog() {
+  # Execute user prolog actions
+  echo "---- Executing Prolog actions ----"
+  for action in "${prologActions[@]}"; do
+    realAction=$(echo "${action}" | tr "," " ")
+    echo "- Prolog: $realAction"
+    $realAction
+    local actionExitValue=$?
+    if [ $actionExitValue -ne 0 ]; then
+      action_error "$ERROR_PROLOG_ACTION"
+    fi
+  done
+}
+
+###############################################
+# Epilog actions
+###############################################
+epilog() {
+  # Execute user epilog actions
+  echo "---- Executing Epilog actions ----"
+  for action in "${epilogActions[@]}"; do
+    realAction=$(echo "${action}" | tr "," " ")
+    echo "- Epilog: $realAction"
+    $realAction
+    local actionExitValue=$?
+    if [ $actionExitValue -ne 0 ]; then
+      action_error "$ERROR_EPILOG_ACTION"
+    fi
+  done
+}
+
+###############################################
+# Wait for execution end
+###############################################
+wait_for_completion() {
+  # Wait for Master and Workers to finish
+  echo "Waiting for application completion"
+  wait
+}
+
+###############################################
+# Merge traces from all agents
+###############################################
+merge_agents_traces() {
+
+  trace_dir=${specific_log_dir}trace
+  mkdir -p "${trace_dir}"
+
+  pushd . 1>/dev/null 2>/dev/null
+  cd "${specific_log_dir}"
+
+  local trace_name=""
+  if [ -n "${appName}" ]; then
+    trace_name="${appName}_"
+  fi
+  trace_name="${trace_name}${trace_label}"
+
+  echo "compss_agent_merge_traces" "-f" "--result_trace_name=${trace_name}" "--output_dir=${trace_dir}" "${master_node}" ${worker_nodes}
+  "compss_agent_merge_traces" "-f" "--result_trace_name=${trace_name}" "--output_dir=${trace_dir}" "${master_node}" ${worker_nodes}
+
+  popd 1>/dev/null 2>/dev/null
+
+}
+
+###############################################
+# Clean function for trap
+###############################################
+cleanup() {
+  # Avoid clean up if removeWD=flase worker flag is set
+  if [[ "$jvm_workers_opts" == *"-Dcompss.worker.removeWD=false"* ]]; then
+    echo "[WARN] Flag removeWD set to false. Not cleaning Workers WD"
+    echo "[WARN] Flag removeWD set to false. Not cleaning XML files"
+  else
+    # Cleanup
+    echo "Cleanup Worker TMP files"
+    for node in ${worker_nodes}; do
+      local sandboxWD=${worker_working_dir}/${uuid}
+      if [ ! -z "${NODE_NAME_QUEUE}" ]; then
+        node=$(${NODE_NAME_QUEUE} ${node})
+      fi
+      echo "- Removing ${sandboxWD}"
+      # shellcheck disable=SC2086
+      ${LAUNCH_CMD} ${LAUNCH_PARAMS}${LAUNCH_SEPARATOR}${node} ${CMD_SEPARATOR}rm -rf ${sandboxWD}${CMD_SEPARATOR}
+    done
+
+  fi
+}
+
+
+
+#---------------------------------------------------------------------------------------
+# MAIN EXECUTION
+#---------------------------------------------------------------------------------------
+
+  numPrologActions=0
+  declare -a prologActions
+  numEpilogActions=0
+  declare -a epilogActions
+
+  # Get command args
+  get_args "$@"
+
+  # Check other command args
+  check_args
+
+  # Set job variables
+  set_variables
+
+  # Log variables
+  log_variables
+
+  # Write log usage
+  write_log_usage
+
+  # Add clean up for execution end
+  trap cleanup EXIT
+
+  # Prolog
+  prolog
+
+  # Launch execution
+  launch
+
+  # Wait
+  wait_for_completion
+
+  # Merge agents trace
+  if [ "${tracing}" == "true" ]; then
+    merge_agents_traces
+  fi
+
+  # Epilog
+  epilog

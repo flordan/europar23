@@ -1,0 +1,395 @@
+#!/bin/bash
+
+# Setting up COMPSs_HOME
+if [ -z "${COMPSS_HOME}" ]; then
+  COMPSS_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../../.. && pwd )/"
+fi
+if [ ! "${COMPSS_HOME: -1}" = "/" ]; then
+  COMPSS_HOME="${COMPSS_HOME}/"
+fi
+export COMPSS_HOME=${COMPSS_HOME}
+
+# Load auxiliar scripts
+
+# shellcheck source=../system/commons/logger.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/logger.sh"
+
+# shellcheck source=../system/commons/version.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/version.sh"
+
+
+# shellcheck source=../system/agents/commons.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/agents/commons.sh"
+
+
+###############################################
+# SCRIPT CONSTANTS DECLARATION
+###############################################
+APP_CMD="curl"
+DEFAULT_METHOD="main"
+DEFAULT_LANG="JAVA"
+
+###############################################
+# ERROR CONSTANTS DECLARATION
+###############################################
+ERROR_APPLICATION="Missing EXECUTABLE argument"
+ERROR_MASTER_NODE="Missing master node argument"
+ERROR_MASTER_PORT="Missing master port argument"
+
+
+###############################################
+###############################################
+# Display functions
+###############################################
+###############################################
+
+###############################################
+# Displays usage
+###############################################
+usage() {
+  cat <<EOF
+Usage: $0 [OPTION]... EXECUTABLE [EXECUTION_ARGUMENTS]...
+EOF
+
+  show_opts
+
+  cat << EOF
+General options:
+    --help, -h                              Prints this message
+
+    --version, v                            Prints COMPSs version
+EOF
+}
+
+###############################################
+# Display Invocation details
+###############################################
+display_invocation() {
+  msg=\
+"Invocation details:
+    Host:               ${master_node}
+    Port:               ${master_port}
+    Lang:               ${lang}
+    Class name:         ${fullAppPath}
+    Method name:        ${method_name}"
+  if [ -n "${cei}" ]; then
+    msg="${msg} 
+    COMPSs Interface    ${cei}"
+  fi
+  msg="${msg} 
+    Parameters:"
+  if [ "${params_as_array}" == "true" ]; then
+    local params="["
+    if [ $# -gt 0 ]; then
+      params="${params}$1"
+      shift 1
+      for param in "$@"; do
+        params="${params}, ${param}"
+      done
+    fi 
+    params="${params}]"
+    msg="${msg} 
+        * $params"
+  else
+    for param in "$@"; do
+      msg="${msg} 
+        * ${param}"
+    done
+  fi
+  display_info "${msg}"
+}
+
+
+###############################################
+###############################################
+# Option management functions
+###############################################
+###############################################
+
+###############################################
+# Display All Script Options
+############################################### 
+show_opts() {
+  cat <<EOF
+Target options:
+EOF
+  show_target_opts
+  cat <<EOF
+
+Action options:
+EOF
+  show_action_opts
+  cat <<EOF
+
+Execution options:
+EOF
+  show_execution_opts
+}
+
+###############################################
+# Display Script Target Options
+###############################################
+show_target_opts() {
+  cat <<EOF
+    --master_node=<string>                  Node where to run the COMPSs Master
+                                            Mandatory
+
+    --master_port=<string>                  Node where to run the COMPSs Master
+                                            Mandatory 
+EOF
+}
+
+###############################################
+# Display Script Action Options
+###############################################
+show_action_opts() {
+  cat <<EOF
+    --stop                                  Stops the agent after the execution
+                                            of the task.   
+
+    --forward_to=<list>                     Forwards the stop action to other
+                                            agents, the list shoud follow the
+                                            format:
+                                            <ip1>:<port1>;<ip2>:<port2>...
+EOF
+}
+
+###############################################
+# Display Script Execution Options
+###############################################  
+show_execution_opts() {
+  cat <<EOF
+    --cei=<string>                          Canonical name of the interface declaring the methods
+                                            Default: No interface declared
+
+    --lang=<string>                         Language implementing the operation
+                                            Default: ${DEFAULT_LANG}
+
+    --method_name=<string>                  Name of the method to invoke
+                                            Default: main and enables array parameter
+
+    --parameters_array, --array             Parameters are encapsulated as an array
+                                            Default: disabled
+EOF
+}
+
+###############################################
+# Parses the options from the commandline and updates the current option values
+###############################################
+get_args() {
+  # Avoid enqueue if there is no application
+  if [ $# -eq 0 ]; then
+    usage
+    exit 1
+  fi
+
+  params_as_array="false"
+  # Parse COMPSs Options
+  while getopts hvgtmd-: flag; do
+    # Treat the argument
+    case "$flag" in
+      h)
+        # Display help
+        usage
+        exit 0
+        ;;
+      v)
+        # Display version
+        show_version
+        exit 0
+        ;;
+      -)
+        # Check more complex arguments
+        case "$OPTARG" in
+          # Options Description options
+          execution_opts)
+            # Display execution options
+            show_execution_opts
+            exit 0
+            ;;
+          help)
+            # Display help
+            usage
+            exit 0
+            ;;
+          opts)
+            # Display all options
+            show_opts
+            exit 0
+            ;;
+
+          # Version Options
+          flower)
+            # Display flower
+            show_flower
+            exit 0
+            ;;
+          recipe)
+            # Display recipe
+            show_recipe
+            exit 0
+            ;;
+          version)
+            # Show version
+            show_full_version
+            exit 0
+            ;;
+
+          # Invocation options
+          array)
+            params_as_array="true"
+            ;;
+          cei=*)
+            cei=${OPTARG//cei=/}
+            ;;
+          forward_to=*)
+            forward_to=${OPTARG//forward_to=/}
+            ;;
+          lang=*)
+            lang=${OPTARG//lang=/}
+            ;;
+          master_node=*)
+            master_node=${OPTARG//master_node=/}
+            ;;
+          master_port=*)
+            master_port=${OPTARG//master_port=/}
+            ;;
+          method_name=*)
+            method_name=${OPTARG//method_name=/}
+            ;;
+          parameters_array)
+            params_as_array="true"
+            ;;
+          stop)
+            action="stop"
+            ;;
+          *)
+            # Flag didn't match any patern. Add to COMPSs
+            args_pass="$args_pass --$OPTARG"
+            ;;
+        esac
+        ;;
+      *)
+        # Flag didn't match any patern. End of COMPSs flags
+        args_pass="$args_pass -$flag"
+        ;;
+    esac
+  done
+
+  # Shift COMPSs arguments
+  shift $((OPTIND-1))
+
+  # Wrap full app path for lang inference
+  fullAppPath=$1
+
+  app_args_optind="${OPTIND}"
+}
+
+###############################################
+# Validates the current script configuration
+###############################################
+check_args() {
+  if [ -z "${fullAppPath}" ]; then
+    display_error "${ERROR_APPLICATION}"
+  fi
+
+  if [ -z "${master_node}" ]; then
+    display_error "${ERROR_MASTER_NODE}"
+  fi
+
+  if [ -z "${master_port}" ]; then
+    display_error "${ERROR_MASTER_PORT}"
+  fi
+
+  if [ -z "${lang}" ]; then
+    lang=${DEFAULT_LANG}
+  fi
+
+  if [ -z "${method_name}" ]; then
+    method_name=${DEFAULT_METHOD}
+    if [ "${lang}"  == "JAVA" ] || [ "${lang}"  == "java" ]; then 
+        params_as_array="true"
+    fi
+  fi
+  
+  if [[ "${fullAppPath}" == *.py ]]; then
+    echo "comprovacion funciona"
+    fullAppPath=${fullAppPath: :-3}
+  fi
+
+}
+
+
+###############################################
+###############################################
+# Secondary functions
+###############################################
+###############################################
+
+###############################################
+# Invoke remote method
+###############################################
+call() {
+  display_invocation "$@"
+  local http_cei=""
+  if [ ! -z "${cei}" ]; then
+    http_cei="<ceiClass>${cei}</ceiClass>"
+  fi
+
+  local actionTrigger=""
+  if [ ! -z "${action}" ]; then
+    local forwardsWrapper=""
+    if [ ! -z "${forward_to}" ]; then
+      local forwardArray=(${forward_to//;/ })
+      local agentArray=""
+      for agent in "${forwardArray[@]}"; do
+        agentArray=$agentArray"<agent>http://${agent}</agent>"
+      done
+      forwardsWrapper="<forwardTo>"$agentArray"</forwardTo>"
+    fi
+    actionTrigger="<action><actionName>"${action}"</actionName>"${forwardsWrapper}"</action>"
+  fi
+
+  if [ "${params_as_array}" == "true" ]; then
+    get_parameters_as_array "${lang}" "$@"
+  else
+    get_parameters "${lang}" "$@"
+  fi  
+  local http_parameters=${PARAMETERS}
+
+  local http_resource="http://${master_node}:${master_port}/COMPSs/startApplication"
+  local http_header="content-type: application/xml"
+
+  local http_data="<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
+  <startApplication>
+    <lang>${lang}</lang>
+    ${http_cei}
+    <className>${fullAppPath}</className>
+    <hasResult>false</hasResult>
+    <methodName>${method_name}</methodName>
+    ${actionTrigger}
+    ${http_parameters}
+  </startApplication>"
+  
+  "${APP_CMD}" "-s" "-XPUT" "${http_resource}" "-H" "${http_header}" "-d" "${http_data}"
+}
+
+
+###############################################
+###############################################
+# Main code
+###############################################
+###############################################
+
+# Get command args
+get_args "$@"
+shift ${app_args_optind}
+
+# Check other command args
+check_args
+
+call "$@"
+echo ""

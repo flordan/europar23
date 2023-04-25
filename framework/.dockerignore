@@ -1,0 +1,18 @@
+# ignore and .cache folders
+.cache
+
+# python files
+**/*.pyc
+**/*.pyo
+
+# maven
+**/target
+
+# jetbrains
+.idea
+*.iml
+
+./builders/packages
+./builders/scs/commons/tmp
+./builders/tmp
+./tests/sources/sc/apps

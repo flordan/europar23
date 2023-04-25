@@ -1,0 +1,184 @@
+#!/bin/bash
+
+# Setting up COMPSs_HOME
+if [ -z "${COMPSS_HOME}" ]; then
+  COMPSS_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../../.. && pwd )/"
+fi
+if [ ! "${COMPSS_HOME: -1}" = "/" ]; then
+  COMPSS_HOME="${COMPSS_HOME}/"
+fi
+export COMPSS_HOME=${COMPSS_HOME}
+
+# Load auxiliar scripts
+
+# shellcheck source=../system/commons/logger.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/logger.sh"
+
+# shellcheck source=../system/commons/version.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/version.sh"
+
+# shellcheck source=../system/runtime/compss_setup.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/trace/generatePRVs.sh"
+
+###############################################
+# SCRIPT CONSTANTS DECLARATION
+###############################################
+DEFAULT_TRACE_NAME="compss_execution"
+DEFAULT_OUTPUT_DIR="$(pwd)/agentTraceMerge"
+DEFAULT_LOG_LEVEL_ENABLED="${GEN_TRACING_LOG_LEVEL_DEBUG}"
+DEFAULT_LOG_LEVEL="${GEN_TRACING_DEFAULT_LOG_LEVEL}"
+
+ERR_NO_TRACE_IN="There's no trace file in directory"
+WARN_SET_DEFAULT_OUTPUT_DIR="output_dir is not set, using default output directory: ${DEFAULT_OUTPUT_DIR}/"
+WARN_SET_DEFAULT_TRACE_NAME="result_trace_name is not set, using default name: \"${DEFAULT_TRACE_NAME}\""
+WARN_OVERRIDEN_OUTPUT="Output folder already exists and will be overriden."
+ASK_OVERRIDE_OUTPUT="Output folder already exists, do you want to overrite it? (y/n)"
+
+usage(){
+  cat <<EOT
+  Usage:  $0 [OPTION]... LOG_DIR...
+
+  Merges the traces of the specified agents into a new trace created at the directory <output_dir>
+
+    options:                
+            -d,--debug                                      Enables log at level ${DEFAULT_LOG_LEVEL_ENABLED}. 
+                                                            Default level: ${DEFAULT_LOG_LEVEL}
+
+            -f,--force_override                             Overrides output_dir if it already exists without asking
+
+            -h,--help                                       Shows this message
+
+            --log_level=<log_level>                         Sets the log level: : ${GEN_TRACING_LOG_LEVEL_OFF} | ${GEN_TRACING_LOG_LEVEL_DEBUG} 
+                                                            Default level: ${DEFAULT_LOG_LEVEL}
+
+            --output_dir=<output_dir>                       Sets the directory where to store the merged traces
+
+            --result_trace_name=<result_trace_name>         Sets the name of the generated trace
+EOT
+}
+
+
+get_args() {
+  # Parse Script Options
+  while getopts hfdn-: flag; do
+    # Treat the argument
+    case "$flag" in
+      h)
+        # Display help
+        usage
+        exit 0
+        ;;
+      f)
+        force_override=true
+        ;;
+      d)
+        gen_tracing_log_level=${DEFAULT_LOG_LEVEL_ENABLED}
+        ;;
+      -)
+        # Check more complex arguments
+        case "$OPTARG" in
+          help)
+          # Display help
+            usage
+            exit 1
+            ;;
+          debug)
+            gen_tracing_log_level=${DEFAULT_LOG_LEVEL_ENABLED}
+            ;;
+          force_override)
+            force_override=true
+            ;;
+          log_level)
+            gen_tracing_log_level=${OPTARG//log_level=/}
+            ;;
+          output_dir=*)
+            output_dir=${OPTARG//output_dir=/}
+            ;;
+          result_trace_name=*)
+            result_trace_name=${OPTARG//result_trace_name=/}
+            ;;
+          *)
+          # Flag didn't match any patern. Raise exception
+            echo "Bad argument: $OPTARG" 1>&2
+            exit 1
+            ;;
+        esac
+        ;;
+      *)
+      # Flag didn't match any patern. End of script flags
+      break
+      ;;
+    esac
+  done
+  shift $((OPTIND-1))
+  input_dirs=$*
+}
+
+check_args(){
+  # Check script options
+  if [ -z "${input_dirs}" ]; then
+    fatal_error "Error: Missing input traces to merge" 1
+  fi
+
+  input_traces=""
+  for input in ${input_dirs}; do
+    get_trace_from_agent_folder "${input}"
+    input_traces="${input_traces} ${trace}"
+  done
+
+  if [ -z "${output_dir}" ]; then
+    display_warning "${WARN_SET_DEFAULT_OUTPUT_DIR}"
+    output_dir="${DEFAULT_OUTPUT_DIR}"
+  fi
+  output_dir=$(eval "readlink -f ${output_dir}")
+  
+  if [ -z "${result_trace_name}" ]; then
+    display_warning "${WARN_SET_DEFAULT_TRACE_NAME}"
+    result_trace_name="${DEFAULT_TRACE_NAME}"
+  fi
+    
+  if [ -z "${gen_tracing_log_level}" ]; then
+    gen_tracing_log_level=${DEFAULT_LOG_LEVEL}
+  fi
+  gen_tracing_log_dir="${output_dir}"
+}
+
+generate_output_dir(){
+  if [ -d  "${output_dir}" ]; then
+    if [ ${force_override} ]; then
+      display_warning "${WARN_OVERRIDEN_OUTPUT}"
+    else
+      display_warning "${ASK_OVERRIDE_OUTPUT}"
+      read response
+      if [ "${response}" != "y" ] && [ "${response}" != "Y" ] && [ "${response}" != "yes" ] && [ "${response}" != "YES" ]; then
+        exit 1
+      fi
+    fi
+    rm -rf "${output_dir}"
+  fi
+  mkdir -p "${output_dir}"
+}
+
+get_trace_from_agent_folder(){
+    local folder=${1}
+    folder=$(eval "readlink -f ${folder}")
+    trace=$(find "${folder}" -name "*.prv")
+    if [ -z "${trace}" ]; then
+        fatal_error "${ERR_NO_TRACE_IN} ${folder}" 1
+    fi
+    trace="${trace::-4}"
+}
+
+#######################################
+# Main script
+#######################################
+# Parse script options
+get_args "$@"
+check_args
+generate_output_dir
+# Run merger
+echo "${output_dir} ${result_trace_name} ${input_traces}"
+join_traces "${output_dir}" "${result_trace_name}" ${input_traces}

@@ -1,0 +1,87 @@
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!-- GENERAL INFORMATION -->
+    <artifactId>compss-adaptors-agent-rest-commons</artifactId>
+    <packaging>jar</packaging>
+    <parent>
+        <groupId>es.bsc.compss</groupId>
+        <artifactId>compss-adaptors-agent-rest</artifactId>
+        <version>3.1.rc2303</version>
+        <relativePath>..</relativePath>
+    </parent>
+
+    <!-- PROJECT INFORMATION -->
+    <name>COMPSs Back-end REST Agent Commons</name>
+    <description>Classes shared among the Master node and the workers when using the REST api to interact between agents.</description>
+    <url>http://www.bsc.es</url>
+    <inceptionYear>2014</inceptionYear>
+    <licenses>
+        <license>
+            <name>Apache License, Version 2.0</name>
+            <url>http://www.apache.org/licenses/LICENSE-2.0.html</url>
+        </license>
+    </licenses>
+    <organization>
+        <name>BSC</name>
+        <url>http://www.bsc.es</url>
+    </organization>
+
+    <!-- DEPENDENCIES -->
+    <dependencies>
+        <!-- COMPSs Dependencies -->
+        <!-- Common Adaptor classes -->
+        <dependency>
+            <groupId>es.bsc.compss</groupId>
+            <artifactId>compss-adaptors-commons</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        
+        <!-- Agent Interface -->
+        <dependency>
+            <groupId>es.bsc.compss</groupId>
+            <artifactId>compss-agent-commons</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        
+        <!-- Resource configuration classes -->
+        <dependency>
+            <groupId>es.bsc.compss</groupId>
+            <artifactId>compss-resources-schema</artifactId>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>es.bsc.compss</groupId>
+            <artifactId>compss-project-schema</artifactId>
+            <scope>provided</scope>
+        </dependency>
+
+        <!-- JAXB -->
+        <dependency>
+            <groupId>jakarta.xml.bind</groupId>
+            <artifactId>jakarta.xml.bind-api</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.sun.xml.bind</groupId>
+            <artifactId>jaxb-impl</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+    </dependencies>
+
+    <!-- BUILD -->
+    <build>
+        <finalName>${project.artifactId}</finalName>
+        <plugins>
+            <!-- Compile Java code -->
+            <plugin>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>${maven-compiler-plugin.version}</version>
+                <configuration>
+                    <forceJavacCompilerUse>true</forceJavacCompilerUse>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

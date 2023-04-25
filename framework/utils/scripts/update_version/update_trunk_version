@@ -1,0 +1,120 @@
+#!/bin/bash -e
+
+usage() {
+  exitValue=$1
+
+  echo " "
+  echo "Usage ./update_trunk_version <previousVersion> <newVersion> <commitChanges>"
+  echo " "
+
+  exit "$exitValue"
+}
+ 
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  # Check parameters
+  if [ $# -ne 3 ]; then
+    echo "ERROR: Incorrect number of parameters"
+    usage 1
+  fi
+
+  # Get version parameters
+  previousVersion=$1
+  newVersion=$2
+  commitChanges=$3
+  echo "Updating COMPSs from ${previousVersion} to ${newVersion}..."
+
+  # Define script variables
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  base_trunk_dir=${SCRIPT_DIR}/../../../
+
+  #---------------------------------------------------------------------
+  # Modify all pom files
+  echo "- Modifying pom files..."
+  cd "${base_trunk_dir}"
+  pomFiles=$(find . -name pom.xml)
+  for pom in $pomFiles; do
+    echo "    $pom"
+    sed -i 's/<version>'"${previousVersion}"'<\/version>/<version>'"${newVersion}"'<\/version>/g' "$pom"
+    sed -i 's/<compss.version>'"${previousVersion}"'<\/compss.version>/<compss.version>'"${newVersion}"'<\/compss.version>/g' "$pom"
+  done
+  cd "${base_trunk_dir}"
+
+  #---------------------------------------------------------------------
+  # Modify python binding files
+  echo "- Modifying binding files..."
+  setupFile=${base_trunk_dir}/compss/programming_model/bindings/python/setup.py
+  echo "    $setupFile"
+  sed -i 's/'"${previousVersion}"'/'"${newVersion}"'/g' "$setupFile"
+
+  #---------------------------------------------------------------------
+  # Modify utils/docker/
+  echo "- Modifying utils/docker files..."
+  cd "${base_trunk_dir}/utils/docker/agent"
+  file="build_image"
+  echo "    $file"
+  sed -i 's/COMPSs_VERSION="'${previousVersion}'"/COMPSs_VERSION="'${newVersion}'"/g' "$file"
+  cd "${base_trunk_dir}"
+
+  #---------------------------------------------------------------------
+  # Modify utils/scripts
+  echo "- Modifying utils/scripts files..."
+  cd "${base_trunk_dir}/utils/scripts/"
+  files=$(grep -R -l "$previousVersion" | cat)
+  for file in $files; do
+    echo "    $file"
+    sed -i 's/'"${previousVersion}"'/'"${newVersion}"'/g' "$file"
+  done
+  cd "${base_trunk_dir}"
+
+  #---------------------------------------------------------------------
+  # Modify utils/storage
+  echo "- Modifying utils/storage files..."
+  cd "${base_trunk_dir}/utils/storage/dummyPSCO/"
+  file="pom.xml"
+  echo "    $file"
+  sed -i 's/<version>'"${previousVersion}"'<\/version>/<version>'"${newVersion}"'<\/version>/g' "$file"
+  cd "${base_trunk_dir}"
+
+
+
+  #---------------------------------------------------------------------
+  # Modify builders version
+  echo "- Modifying builders files..."
+  buildpackages=${base_trunk_dir}/builders/buildpackages
+  buildlocal=${base_trunk_dir}/builders/buildlocal
+  scREADME=${base_trunk_dir}/builders/specs/sc/README
+  echo "    $buildpackages"
+  sed -i 's/'"${previousVersion}"'/'"${newVersion}"'/g' "$buildpackages"
+  echo "    $buildlocal"
+  sed -i 's/'"${previousVersion}"'/'"${newVersion}"'/g' "$buildlocal"
+  echo "    $scREADME"
+  sed -i 's/'"${previousVersion}"'/'"${newVersion}"'/g' "$scREADME"
+
+
+  #---------------------------------------------------------------------
+  # COMMIT MODIFICATIONS IF NEEDED
+  if [ "$commitChanges" == "true" ]; then
+    echo "- Committing modifications to trunk"
+    cd "${base_trunk_dir}"
+    if git commit -am "Update to version ${newVersion}"; then
+        git push http://${credentials}@gitlab.bsc.es/wdc/compss/framework.git trunk
+    fi
+  fi
+
+
+  #---------------------------------------------------------------------
+  # NOTIFY SUCCESS
+  echo " "
+  echo "FINISHED! All compss version updated from ${previousVersion} to ${newVersion}"
+  echo " "
+
+  #---------------------------------------------------------------------
+  # Warn for RELEASE NOTES and CHANGELOG modifications
+  echo "************************************************"
+  echo "* WARNING: RELEASE_NOTES and changelog must be *"
+  echo "*          manually edited                     *"
+  echo "************************************************"
+
+  # END
+  exit 0

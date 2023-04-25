@@ -1,0 +1,119 @@
+#!/bin/bash
+
+if [ "${#}" -eq 0 ]; then
+  echo "Select application version: FLAT | NESTED"
+fi
+version="${1}"
+if [ "${1}" == "FLAT" ]; then
+  shift 1
+  invocation="--cei=randomforest.RandomForestItf randomforest.RandomForest"
+elif [ "${1}" == "NESTED" ]; then
+  shift 1
+  invocation="--cei=randomforest.batch.RandomForestItf randomforest.batch.RandomForest "
+else 
+  echo "Unknown application version ${1}. Select application version: FLAT | NESTED"
+  exit 1
+fi
+
+num_models=${1}
+if [ -z "${num_models}" ]; then
+  num_models=1
+fi
+
+num_estimators=${2}
+if [ -z "${num_estimators}" ]; then
+  num_estimators=1
+fi
+
+estimators_per_batch=${3}
+if [ -z "${estimators_per_batch}" ]; then
+  estimators_per_batch=${num_estimators}
+fi
+if [ "${estimators_per_batch}" -lt "48" ];then
+  estimators_per_batch=48
+fi
+
+
+if [ "${version}" == "FLAT" ]; then
+  echo "Running Random Forest's ${version} version training ${num_models} models with ${num_estimators} estimator"
+fi
+if [ "${version}" == "NESTED" ]; then
+  echo "Running Random Forest's ${version} version training ${num_models} models with ${num_estimators} estimator with batches of ${estimators_per_batch}"
+fi
+
+base_app_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+jar_name="application/target/random_forest.jar"
+
+if [ ! -f "${base_app_dir}/${jar_name}" ]; then
+  pushd . > /dev/null 2> /dev/null
+  cd ${base_app_dir}/application
+  mvn clean package
+  popd > /dev/null 2> /dev/null
+fi
+
+NUM_RETRIES="3"
+
+log_dir="/tmp/test/"
+mkdir -p "${log_dir}"
+output_log="${log_dir}test.outputlog"
+error_log="${log_dir}test.errorlog"
+touch "${output_log}"
+touch "${error_log}"
+
+
+echo "Start Agents"
+echo "    Starting Agent1"
+agent_log_dir="${log_dir}/COMPSsWorker01/"
+agent_output_log="${log_dir}/COMPSsWorker01.outputlog"
+agent_error_log="${log_dir}/COMPSsWorker01.errorlog"
+
+compss_agent_start \
+  --hostname="COMPSsWorker01" \
+  --classpath="${base_app_dir}/${jar_name}" \
+  --log_dir="${agent_log_dir}" \
+  --rest_port="46101" \
+  --comm_port="46102" \
+  --project="${base_app_dir}/project1.xml" \
+  --resources="${base_app_dir}/resources.xml" 1>"${agent_output_log}" 2>"${agent_error_log}" &
+
+agent_PID=${!}  
+
+sleep 5
+
+echo "Checking Agents"
+  retries="${NUM_RETRIES}"
+  curl -XGET "http://127.0.0.1:46101/COMPSs/test" 1>/dev/null 2>/dev/null
+  exit_val=$?
+  while [ ! "${exit_val}" == "0" ] && [ "${retries}" -gt "0" ]; do
+    sleep 1
+    retries=$((retries - 1 ))
+    curl -XGET "http://127.0.0.1:46101/COMPSs/test" 1>/dev/null 2>/dev/null
+    exit_val=$?
+  done
+  if [ ${exit_val} != 0 ]; then
+    echo "    Agent1 could not be started"
+    exit 1
+  fi
+echo "    Agent1 started"
+
+echo "Calling operation"
+compss_agent_call_operation \
+   --master_node="127.0.0.1" \
+   --master_port="46101" \
+   --method_name="main" \
+   --array \
+   --stop \
+   ${invocation} \
+   30000 40 200 20 2 1 2 true 0 ${num_estimators} ${num_estimators} ${num_models} ${estimators_per_batch}
+
+echo "Waiting for result"
+wait ${agent_PID}
+
+
+echo "Training times:"
+times=$(grep "TIME Training" "${agent_log_dir}/jobs/job1_NEW.out" | tail -n +2 |sed 's/TIME Training: //')
+model_id=1
+for time in ${times}; do
+  echo "Model ${model_id}: ${time}" 
+  model_id=$(( model_id + 1 ))
+done

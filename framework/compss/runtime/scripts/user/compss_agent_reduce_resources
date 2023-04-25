@@ -1,0 +1,354 @@
+#!/bin/bash
+
+# Setting up COMPSs_HOME
+if [ -z "${COMPSS_HOME}" ]; then
+  COMPSS_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../../.. && pwd )/"
+fi
+if [ ! "${COMPSS_HOME: -1}" = "/" ]; then
+  COMPSS_HOME="${COMPSS_HOME}/"
+fi
+export COMPSS_HOME=${COMPSS_HOME}
+
+# Load auxiliar scripts
+
+# shellcheck source=../system/commons/logger.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/logger.sh"
+
+# shellcheck source=../system/commons/version.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/version.sh"
+
+# shellcheck source=../system/runtime/compss_setup.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/runtime/compss_setup.sh"
+
+# shellcheck source=../system/agents/commons.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/agents/commons.sh"
+
+
+
+###############################################
+# SCRIPT CONSTANTS DECLARATION
+###############################################
+APP_CMD="curl"
+
+###############################################
+# ERROR CONSTANTS DECLARATION
+###############################################
+ERROR_NO_TARGET_HOST="Target host not specified."
+UNKNOWN_OPTION="Unknown option tag. Ignoring option"
+
+
+###############################################
+###############################################
+# Display functions
+###############################################
+###############################################
+
+###############################################
+# Displays usage
+###############################################
+usage() {
+  cat <<EOF
+Usage: $0 [OPTION]... RESOURCE_NAME [ADAPTOR_PROPERTY_NAME=ADAPTOR_PROPERTY_VALUE]
+EOF
+  show_opts
+  cat << EOF
+General options:
+    --help, -h                              Prints this message
+
+    --version, v                            Prints COMPSs version
+EOF
+}
+
+###############################################
+# Display Invocation details
+###############################################
+display_invocation() {
+  display_info \
+"Target agent details: 
+    Host:                     ${agent_node} 
+    Port:                     ${agent_port} 
+
+Interaction details: 
+    Resource Name:            ${resource_node} 
+    Adaptor:                  ${resource_adaptor} 
+    Adaptor properties: 
+${ADAPTOR_PROPERTIES_DEBUG} 
+Resource details: 
+    Description: 
+        Processors: 
+            CPU:              ${resource_cpu_count} 
+            GPU:              ${resource_gpu_count} 
+            FPGA:             ${resource_fpga_count} 
+        Memory: 
+            Type:             ${resource_mem_type} 
+            Size:             ${resource_mem_size} 
+        OS: 
+            Type:             ${resource_os_type} 
+            Distribution:     ${resource_os_distr} 
+            Version:          ${resource_os_version}"
+}
+
+
+###############################################
+###############################################
+# Option management functions
+###############################################
+###############################################
+
+###############################################
+# Display All Script Options
+############################################### 
+show_opts() {
+    cat <<EOF
+Target Options:
+EOF
+  show_target_opts
+  cat <<EOF
+Resource Capabilities:
+EOF
+  show_resource_opts
+}
+
+###############################################
+# Display Script Target Options
+###############################################
+show_target_opts() {
+cat <<EOT
+    --agent_node=<string>                   Name of the node where to add the resource
+                                            Default: ${DEFAULT_AGENT_NODE}
+
+    --agent_port=<string>                   Port of the node where to add the resource
+                                            Default: ${DEFAULT_AGENT_PORT}
+EOT
+}
+
+
+###############################################
+# Display Script Resource Capabilities Options
+###############################################
+show_resource_opts() {
+  cat <<EOT
+    --cpu=<integer>                         Number of cpu cores available on the resource 
+                                            Default: ${DEFAULT_CPU_COUNT}
+
+    --cpu_name=<string>                     Name of the cpu processor available on the resource
+                                            Default: ${DEFAULT_CPU_NAME}
+
+    --gpu=<integer>                         Number of gpus devices available on the resource 
+                                            Default: ${DEFAULT_GPU_COUNT}
+
+    --fpga=<integer>                        Number of fpga devices available on the resource 
+                                            Default: ${DEFAULT_FPGA_COUNT}
+
+    --mem_type=<string>                     Type of memory used by the resource
+                                            Default: ${DEFAULT_MEM_TYPE}
+
+    --mem_size=<string>                     Size of the memory available on the resource
+                                            Default: ${DEFAULT_MEM_SIZE}
+
+    --os_type=<string>                      Type of operating system managing the resource  
+                                            Default: ${DEFAULT_OS_TYPE}
+
+    --os_distr=<string>                     Distribution of the operating system managing the resource  
+                                            Default: ${DEFAULT_OS_DISTR}
+                                            
+    --os_version=<string>                   Version of the operating system managing the resource  
+                                            Default: ${DEFAULT_OS_VERSION}
+EOT
+}
+
+###############################################
+# Parses the options from the commandline and updates the current option values
+###############################################
+get_args() {
+  # Parse COMPSs Options
+  while getopts hvgtmd-: flag; do
+    # Treat the argument
+    case "$flag" in
+      h)
+        # Display help
+        usage
+        exit 0
+        ;;
+      v)
+        # Display version
+        show_version
+        exit 0
+        ;;
+      -)
+        # Check more complex arguments
+        case "$OPTARG" in
+          # Options Description options
+          help)
+            # Display help
+            usage
+            exit 0
+            ;;
+          opts)
+            # Display options
+            show_opts
+            exit 0
+            ;;
+
+          # Version Options
+          flower)
+            # Display flower
+            show_flower
+            exit 0
+            ;;
+          recipe)
+            # Display recipe
+            show_recipe
+            exit 0
+            ;;
+          version)
+            # Show version
+            show_full_version
+            exit 0
+            ;;
+
+          # Invocation options
+          agent_node=*)
+            agent_node=${OPTARG//agent_node=/}
+            ;;
+          agent_port=*)
+            agent_port=${OPTARG//agent_port=/}
+            ;;
+          cpu=*)
+            resource_cpu_count=${OPTARG//cpu=/}
+            ;;
+          cpu_name=*)
+            resource_cpu_name=${OPTARG//cpu_name=/}
+            ;;
+          gpu=*)
+            resource_gpu_count=${OPTARG//gpu=/}
+            ;;
+          fpga=*)
+            resource_fpga_count=${OPTARG//fpga=/}
+            ;;
+          mem_type=*)
+            resource_mem_type=${OPTARG//mem_type=/}
+            ;;
+          mem_size=*)
+            resource_mem_size=${OPTARG//mem_size=/}
+            ;;          
+          os_type=*)
+            resource_os_type=${OPTARG//os_type=/}
+            ;;
+          os_distr=*)
+            resource_os_distr=${OPTARG//os_distr=/}
+            ;;
+          os_version=*)
+            resource_os_version=${OPTARG//os_version=/}
+            ;;
+          *)
+            # Flag didn't match any pattern. Ingoring option 
+            display_warning "${UNKNOWN_OPTION} ${OPTARG}"
+            ;;
+        esac
+        ;;
+      *)
+        # Flag didn't match any patern. End of description flags
+        ;;
+    esac
+  done
+
+  options_index=$((OPTIND))
+}
+
+###############################################
+# Validates the current script configuration
+###############################################
+check_args() {
+  
+  if [ -z "${agent_node}" ]; then
+    agent_node=${DEFAULT_AGENT_NODE}
+  fi
+  if [ -z "${agent_port}" ]; then
+    agent_port=${DEFAULT_AGENT_PORT}
+  fi
+
+
+  if [ -z "${resource_cpu_name}" ]; then
+    resource_cpu_name=${DEFAULT_CPU_NAME}
+  fi
+  if [ -z "${resource_cpu_count}" ]; then
+    resource_cpu_count=${DEFAULT_CPU_COUNT}
+  fi
+  if [ -z "${resource_gpu_count}" ]; then
+    resource_gpu_count=${DEFAULT_GPU_COUNT}
+  fi
+  if [ -z "${resource_fpga_count}" ]; then
+    resource_fpga_count=${DEFAULT_FPGA_COUNT}
+  fi
+
+  if [ -z "${resource_mem_type}" ]; then
+    resource_mem_type=${DEFAULT_MEM_TYPE}
+  fi
+  if [ -z "${resource_mem_size}" ]; then
+    resource_mem_size=${DEFAULT_MEM_SIZE}
+  fi
+
+  if [ -z "${resource_os_type}" ]; then
+    resource_os_type=${DEFAULT_OS_TYPE}
+  fi
+  if [ -z "${resource_os_distr}" ]; then
+    resource_os_distr=${DEFAULT_OS_DISTR}
+  fi
+  if [ -z "${resource_os_version}" ]; then
+    resource_os_version=${DEFAULT_OS_VERSION}
+  fi
+
+}
+
+
+###############################################
+###############################################
+# Secondary functions
+###############################################
+###############################################
+
+###############################################
+# Agent Invocation
+###############################################
+reduce_resource() {
+  get_resource_description "  " "${resource_cpu_name}" "${resource_cpu_count}" "${resource_gpu_count}" "${resource_fpga_count}" "${resource_mem_size}" "${resource_mem_type}" "${resource_os_distr}" "${resource_os_type}" "${resource_os_version}"
+  local description=${RESOURCE_DESCRIPTION}
+
+  ${APP_CMD} "-s" "-XPUT" "http://${agent_node}:${agent_port}/COMPSs/removeResources" -H 'content-type: application/xml' -d "\
+<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
+<reduceNode>
+  <workerName>${resource_node}</workerName>
+  <resources>
+  ${description}
+  </resources>
+</reduceNode>"
+
+}
+
+
+###############################################
+###############################################
+# Main code
+###############################################
+###############################################
+
+get_args "$@"
+check_args "$@"
+shift $((options_index - 1))
+ 
+if [ $# -eq 0 ]; then
+  display_error "${ERROR_NO_TARGET_HOST}"
+  usage
+  exit
+fi
+
+resource_node=${1}
+shift 1
+
+display_invocation
+reduce_resource

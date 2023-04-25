@@ -1,0 +1,86 @@
+#!/bin/bash
+
+  # Define script constants
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+  # QUEUE SYSTEM PARAMETERS
+  if [ "${#}" -eq "0" ]; then
+    echo "Please indicate number of nodes to be used."
+  fi
+  num_nodes=${1}
+  exec_time=120
+  shift 1
+
+  # SELECT VERSION
+  if [ "${#}" -eq "0" ]; then
+    echo "Select application version: FLAT | NESTED"
+  fi
+  version=${1}
+  if [ "${version}" == "FLAT" ]; then
+    invocation="randomforest.RandomForest"
+  elif [ "${version}" == "NESTED" ]; then
+    invocation="randomforest.batch.RandomForest"
+  else 
+    echo "Unknown application version ${version}. Select application version: FLAT | NESTED"
+    exit 1
+  fi
+  shift 1  
+
+  # APPLICATION PARAMETERS
+  num_models=${1}
+  if [ -z "${num_models}" ]; then
+    num_models=1
+  fi
+  
+  num_estimators=${2}
+  if [ -z "${num_estimators}" ]; then
+    num_estimators=1
+  fi
+
+  num_test_estimators=$(( num_nodes * 48 * 4))
+  if [ ${num_test_estimators} -gt 2048 ]; then
+    num_test_estimators=2048
+  fi
+
+
+  min_batch_size=48
+  distributed_batch_size=$(( num_estimators / num_nodes ))
+  if [ ! "$(( distributed_batch_size * num_nodes ))" -eq "${num_estimators}" ]; then
+    distributed_batch_size=$(( distributed_batch_size + 1 ))
+  fi
+
+  if [ "${min_batch_size}" -gt "${distributed_batch_size}" ]; then
+    batch_size=48
+  else
+    batch_size=${distributed_batch_size}
+  fi
+
+
+    # Create output directory
+  output_dir="${SCRIPT_DIR}/output/${version}"
+  mkdir -p "${output_dir}"
+
+  # Run job
+  enqueue_compss \
+    --lang="java" \
+    --num_nodes="${num_nodes}" \
+    --exec_time="${exec_time}" \
+    \
+    --cpus_per_node=48 \
+    --node_memory=50000 \
+    --worker_in_master_cpus=48 \
+    \
+    --master_working_dir="${output_dir}/" \
+    --worker_working_dir="${output_dir}/" \
+    --base_log_dir="${output_dir}" \
+    --classpath="${SCRIPT_DIR}/application/target/random_forest.jar" \
+    \
+    --log_level="off" \
+    --jvm_workers_opts="-Dcompss.worker.removeWD=false" \
+    \
+    --method_name="main" \
+    --agents \
+    --array \
+    "${invocation}" \
+    30000 40 200 20 2 1 2 "true" 0 "${num_test_estimators}" "${num_estimators}" "${num_models}" "${num_estimators}" "${batch_size}"
+

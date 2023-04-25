@@ -1,0 +1,259 @@
+#!/bin/bash -e
+
+  # INSTALLS ALL THE NECESSARY JARS FOR AN ADAPTOR. 
+  # REQUIRES 2 PARAMETERS: 
+  #  $1 THE PATH TO THE COMPILED ADAPTOR ROOT FOLDER
+  #  $2 PATH WHERE TO INSTALL THE ADAPTOR
+  install_adaptor() {
+      local src_path=$1
+      local dest_path=$2
+      local adaptor_name
+      adaptor_name=$(basename "${src_path}")
+
+      echo "------ Copying ${adaptor_name} adaptor"
+      mkdir "${dest_path}/${adaptor_name}"
+      if [ -d "${src_path}"/master/ ]; then
+        mkdir "${dest_path}/${adaptor_name}"/master
+        cp "${src_path}"/master/*.jar "${dest_path}/${adaptor_name}"/master
+        if [ -f "${src_path}"/master/properties ]; then
+          cp "${src_path}"/master/properties "${dest_path}/${adaptor_name}"/master
+        fi
+      fi
+      if [ -d "${src_path}"/worker/ ]; then
+        mkdir "${dest_path}/${adaptor_name}"/worker
+        cp "${src_path}"/worker/*.jar "${dest_path}/${adaptor_name}"/worker
+      fi
+      if [ -f "${src_path}"/worker/properties ]; then 
+        cp "${src_path}"/worker/properties "${dest_path}/${adaptor_name}"/worker
+      fi
+      if [ -d "${src_path}"/scripts/ ]; then
+        mkdir -p "${COMPSs_target}"/Runtime/scripts/system/adaptors/"${adaptor_name}"
+        cp -r "${src_path}"/scripts/* "${COMPSs_target}"/Runtime/scripts/system/adaptors/"${adaptor_name}"
+      fi
+  }
+
+
+  #
+  # MAIN
+  #
+
+  COMPSs_version=$1
+  distribution=sc
+
+  # Define script variables
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  cd ${SCRIPT_DIR}
+
+  trunk_rel_path=../../../
+  packages_target=${trunk_rel_path}/builders/packages/
+
+  echo " "
+  echo "* Erasing previous tmp Files..."
+  rm -rf tmp/
+
+  echo ""
+  echo "* Compiling sources..."
+  (
+    cd ${trunk_rel_path}
+    touch compss/runtime/config/xml/projects/project_schema.xsd
+    touch compss/runtime/config/xml/resources/resources_schema.xsd
+    mvn -U -DskipTests clean install
+  )
+
+  # Compile streaming backend (kafka)
+  echo ""
+  echo "* Compiling Streaming Backend (Kafka)..."
+  kafka=1 # 0 to skip kafka compilation
+  if [ "$kafka" -ne 0 ]; then
+      (
+        cd "${trunk_rel_path}"/dependencies/kafka
+        if which gradle; then
+          gradle
+          ev=$?
+        elif [ -n "${GRADLE_HOME}" ]; then
+          "${GRADLE_HOME}"/bin/gradle
+          ev=$?
+        else
+           echo "ERROR: Cannot find gradle installation. Please define it in the PATH or set the GRADLE_HOME environment variable"
+           exit 1
+        fi
+        if [ $ev -ne 0 ]; then
+          echo "ERROR: Failed to compile Kafka dependency"
+          exit 1
+        fi
+        ./gradlew jar
+        ev=$?
+        if [ $ev -ne 0 ]; then
+          echo "ERROR: Failed to build Kafka dependency"
+          exit 1
+        fi
+      )
+  fi
+
+  echo ""
+  echo "* Create deployment folders"
+  COMPSs_target=tmp/COMPSs
+  mkdir -p ${COMPSs_target}
+  mkdir -p ${COMPSs_target}/Doc
+  mkdir -p ${COMPSs_target}/Dependencies
+  mkdir -p ${COMPSs_target}/Runtime
+  mkdir -p ${COMPSs_target}/Runtime/configuration
+  mkdir -p ${COMPSs_target}/Runtime/scripts
+  mkdir -p ${COMPSs_target}/Runtime/adaptors
+  mkdir -p ${COMPSs_target}/Runtime/connectors
+  mkdir -p ${COMPSs_target}/Runtime/cloud-conn
+  mkdir -p ${COMPSs_target}/Runtime/scheduler
+  mkdir -p ${COMPSs_target}/Runtime/checkpointer
+  mkdir -p ${COMPSs_target}/Tools
+  mkdir -p ${COMPSs_target}/Tools/monitor
+  mkdir -p ${COMPSs_target}/Tools/storage
+  mkdir -p ${COMPSs_target}/Tools/tracing
+  mkdir -p ${COMPSs_target}/Bindings
+  mkdir -p ${COMPSs_target}/Bindings/bindings-common
+
+  echo " "
+  echo "* Copy deployment files"
+  cp ${trunk_rel_path}/changelog ${COMPSs_target}
+  cp ${trunk_rel_path}/LICENSE ${COMPSs_target}
+  cp ${trunk_rel_path}/NOTICE ${COMPSs_target}
+  cp README ${COMPSs_target}
+  cp ${trunk_rel_path}/RELEASE_NOTES ${COMPSs_target}
+
+  # Dependencies
+  cp -r ${trunk_rel_path}/dependencies/* ${COMPSs_target}/Dependencies/
+  cp -r ${trunk_rel_path}/files/paraver ${COMPSs_target}/Dependencies/
+
+  # Config
+  cp -r ${trunk_rel_path}/compss/runtime/config/* ${COMPSs_target}/Runtime/configuration/
+  find ${COMPSs_target}/Runtime/configuration -name src -print0 | xargs --null -r rm -rf
+  find ${COMPSs_target}/Runtime/configuration -name target -print0 | xargs --null -r rm -rf
+  find ${COMPSs_target}/Runtime/configuration -name pom.xml -delete
+  find ${COMPSs_target}/Runtime/configuration -name .settings -print0 | xargs --null -r rm -rf
+  find ${COMPSs_target}/Runtime/configuration -name .project -delete
+  find ${COMPSs_target}/Runtime/configuration -name .classpath -delete
+
+  # Scripts
+  cp -r ${trunk_rel_path}/compss/runtime/scripts/* ${COMPSs_target}/Runtime/scripts/
+
+  # Adaptors
+  echo "--- Copy adaptors"
+  path_source=${trunk_rel_path}/compss/runtime/adaptors
+  path_target=${COMPSs_target}/Runtime/adaptors
+  for adaptor in ${path_source}/*; do
+    adaptor_name=$(basename "${adaptor}")
+    echo " -- Copying adaptor $adaptor_name"
+    if [ "$adaptor_name" != "commons" ] && [ "$adaptor_name" != "execution" ] && [ "$adaptor_name" != "pom.xml" ] && [ "$adaptor_name" != "target" ]; then
+      install_adaptor "${adaptor}" "${path_target}"
+      if [ "${adaptor_name}" == "agent" ]; then
+          for agent in ${adaptor}/*; do
+              agent_name=$(basename "$agent")
+	      if [ "${agent_name}" != "pom.xml" ] && [ "${agent_name}" != "target" ]; then
+                 install_adaptor "${agent}" "${path_target}"
+              fi
+          done
+      fi
+    fi
+  done
+  find ${COMPSs_target}/Runtime/adaptors -name pom.xml -print0 | xargs rm -f
+
+  # Checkpointer
+  echo "--- Copy checkpointers"
+  checkpointers=$(find ${trunk_rel_path}/compss/runtime/checkpointer/ -name "*.jar")
+  for checkpointer in ${checkpointers}; do
+    cp "$checkpointer" "${COMPSs_target}/Runtime/checkpointer/"
+  done
+
+  # Schedulers
+  echo "--- Copy schedulers"
+  schedulers=$(find ${trunk_rel_path}/compss/runtime/scheduler/ -name "*.jar")
+  for scheduler in $schedulers; do
+    cp "$scheduler" ${COMPSs_target}/Runtime/scheduler/
+  done
+  rm ${COMPSs_target}/Runtime/scheduler/compss-scheduler-commons.jar
+  
+  # Storage
+  echo "--- Copy storage implementations"
+
+  echo "Dealing with Redis storage implementation..."
+  (
+    cd "${trunk_rel_path}/utils/storage/redisPSCO"
+    ./make_bundle.sh
+  )
+  cp -r "${trunk_rel_path}/utils/storage/redisPSCO/COMPSs-Redis-bundle" "${COMPSs_target}/Tools/storage/redis"
+
+  #TODO: add other storage implementations (?)
+
+  # Connectors
+  echo "--- Copy Runtime Connectors"
+  connectors=$(find ${trunk_rel_path}/compss/runtime/resources/ -name "*.jar" | grep -v "cloud-conn")
+  for conn in $connectors; do
+    cp "$conn" ${COMPSs_target}/Runtime/connectors/
+  done
+  echo "--- Copy CONN Connectors"
+  connectors=$(find ${trunk_rel_path}/compss/runtime/resources/ -name "*.jar" | grep "cloud-conn")
+  for conn in $connectors; do
+    cp "$conn" ${COMPSs_target}/Runtime/cloud-conn/
+  done
+
+  # Engine
+  cp "${trunk_rel_path}/compss/runtime/compss-engine.jar" "${COMPSs_target}/Runtime/"
+
+  # Agent
+  cp "${trunk_rel_path}/compss/agent/compss-agent-impl.jar" "${COMPSs_target}/Runtime"
+
+   # Trace operations
+  echo "--- Copy trace operations"
+  cp -r "${trunk_rel_path}/compss/tools/tracing/target/compss-tracing.jar" "${COMPSs_target}/Tools/tracing"
+
+  # TOOLS DEPLOYMENT
+  echo "--- Copy tools"
+  TOMCAT_VER="7.0.65"
+  TOMCAT_URL="http://compss.bsc.es/repo/apache-tomcat/apache-tomcat-7.0.65.tar.gz"
+  (
+    cd tmp/
+    wget $TOMCAT_URL
+    tar xzf apache-tomcat-$TOMCAT_VER.tar.gz
+  )
+  mv tmp/apache-tomcat-$TOMCAT_VER ${COMPSs_target}/Tools/monitor/apache-tomcat/
+  rm -rf ${COMPSs_target}/Tools/monitor/apache-tomcat/webapps/*
+  rm -f ${COMPSs_target}/Tools/monitor/apache-tomcat/conf/server.xml
+  cp -r ${trunk_rel_path}/compss/tools/monitor/target/*.war ${COMPSs_target}/Tools/monitor/apache-tomcat/webapps/
+  cp ${trunk_rel_path}/compss/tools/monitor/target/classes/compss-monitor.conf ${COMPSs_target}/Tools/monitor/apache-tomcat/conf/
+  cp ${trunk_rel_path}/compss/tools/monitor/target/classes/server.xml ${COMPSs_target}/Tools/monitor/apache-tomcat/conf/
+  cp ${trunk_rel_path}/compss/tools/monitor/target/classes/*log4j* ${COMPSs_target}/Tools/monitor/
+
+  # BINDINGS DEPLOYMENT
+  echo "--- Copy bindings-common files"
+  cp -r ${trunk_rel_path}/compss/programming_model/bindings/bindings-common ${COMPSs_target}/Bindings/
+  echo "--- Copy c-binding files"
+  cp -r ${trunk_rel_path}/compss/programming_model/bindings/c ${COMPSs_target}/Bindings/
+  echo "--- Copy python-binding files"
+  cp -r ${trunk_rel_path}/compss/programming_model/bindings/python ${COMPSs_target}/Bindings/
+
+  # Clean git files
+  find "${COMPSs_target}" -name ".git*" -print0 | xargs -0 rm -rf # Clean git files
+
+  #---------------------------------------------------------------------------
+  # Add specific SC install and env files
+  cp install ${COMPSs_target}
+  cp compssenv ${COMPSs_target}
+
+  # Create TAR.GZ
+  echo " "
+  echo "* Packing files..."
+  (
+    cd tmp/
+    tar -czf COMPSs_"${COMPSs_version}".tar.gz COMPSs
+  )
+
+  # Move to final location  
+  echo " "
+  echo "* Moving package to final location..."
+  mkdir -p ${packages_target}/${distribution} 
+  mv tmp/COMPSs_"${COMPSs_version}".tar.gz ${packages_target}/${distribution}
+
+  # Clean COMPSs tmp files
+  echo " "
+  echo "* Cleaning COMPSs tmp files"
+  rm -rf tmp/
+

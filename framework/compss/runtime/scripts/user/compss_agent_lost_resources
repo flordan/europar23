@@ -1,0 +1,235 @@
+#!/bin/bash
+
+# Setting up COMPSs_HOME
+if [ -z "${COMPSS_HOME}" ]; then
+  COMPSS_HOME="$( cd "$( dirname "${BASH_SOURCE[0]}" )"/../../.. && pwd )/"
+fi
+if [ ! "${COMPSS_HOME: -1}" = "/" ]; then
+  COMPSS_HOME="${COMPSS_HOME}/"
+fi
+export COMPSS_HOME=${COMPSS_HOME}
+
+# Load auxiliar scripts
+
+# shellcheck source=../system/commons/logger.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/logger.sh"
+
+# shellcheck source=../system/commons/version.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/commons/version.sh"
+
+# shellcheck source=../system/runtime/compss_setup.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/runtime/compss_setup.sh"
+
+# shellcheck source=../system/agents/commons.sh"
+# shellcheck disable=SC1091
+source "${COMPSS_HOME}Runtime/scripts/system/agents/commons.sh"
+
+
+###############################################
+# SCRIPT CONSTANTS DECLARATION
+###############################################
+APP_CMD="curl"
+
+###############################################
+# ERROR CONSTANTS DECLARATION
+###############################################
+ERROR_NO_TARGET_HOST="Target host not specified."
+UNKNOWN_OPTION="Unknown option tag. Ignoring option"
+
+
+###############################################
+###############################################
+# Display functions
+###############################################
+###############################################
+
+###############################################
+# Displays usage
+###############################################
+usage() {
+  cat <<EOF
+Usage: $0 [OPTION]... RESOURCE_NAME
+EOF
+  show_opts
+  cat << EOF
+General options:
+    --help, -h                              Prints this message
+
+    --version, v                            Prints COMPSs version
+EOF
+}
+
+###############################################
+# Display Invocation details
+###############################################
+display_invocation() {
+  display_info \
+"Target agent details: 
+    Host:                     ${agent_node} 
+    Port:                     ${agent_port} 
+  
+  Lost agent details: 
+    Resource Name:            ${resource_node}"
+  
+}
+
+
+###############################################
+###############################################
+# Option management functions
+###############################################
+###############################################
+
+###############################################
+# Display All Script Options
+############################################### 
+show_opts() {
+    cat <<EOF
+Target Options:
+EOF
+  show_target_opts
+}
+
+###############################################
+# Display Script Target Options
+###############################################
+show_target_opts() {
+cat <<EOT
+    --agent_node=<string>                   Name of the node where to add the resource
+                                            Default: ${DEFAULT_AGENT_NODE}
+
+    --agent_port=<string>                   Port of the node where to add the resource
+                                            Default: ${DEFAULT_AGENT_PORT}
+EOT
+}
+
+###############################################
+# Parses the options from the commandline and updates the current option values
+###############################################
+get_args() {
+  # Parse COMPSs Options
+  while getopts hvgtmd-: flag; do
+    # Treat the argument
+    case "$flag" in
+      h)
+        # Display help
+        usage
+        exit 0
+        ;;
+      v)
+        # Display version
+        show_version
+        exit 0
+        ;;
+      -)
+        # Check more complex arguments
+        case "$OPTARG" in
+
+          # Options Description options
+          help)
+            # Display help
+            usage
+            exit 0
+            ;;
+          opts)
+            # Display options
+            show_opts
+            exit 0
+            ;;
+
+          # Version Options
+          flower)
+            # Display flower
+            show_flower
+            exit 0
+            ;;
+          recipe)
+            # Display recipe
+            show_recipe
+            exit 0
+            ;;
+          version)
+            # Show version
+            show_full_version
+            exit 0
+            ;;
+
+          # Invocation options
+          agent_node=*)
+            agent_node=${OPTARG//agent_node=/}
+            ;;
+          agent_port=*)
+            agent_port=${OPTARG//agent_port=/}
+            ;;
+          *)
+            # Flag didn't match any pattern. Ignoring option 
+            display_warning "${UNKNOWN_OPTION} ${OPTARG}"
+            ;;
+        esac
+        ;;
+      *)
+        # Flag didn't match any patern. End of description flags
+        ;;
+    esac
+  done
+
+  options_index=$((OPTIND))
+}
+
+###############################################
+# Validates the current script configuration
+################################################
+check_args() {
+  
+  if [ -z "${agent_node}" ]; then
+    agent_node=${DEFAULT_AGENT_NODE}
+  fi
+  if [ -z "${agent_port}" ]; then
+    agent_port=${DEFAULT_AGENT_PORT}
+  fi
+}
+
+
+###############################################
+###############################################
+# Secondary functions
+###############################################
+###############################################
+
+###############################################
+# Agent Invocation
+###############################################
+notify_lost_node() {
+  ${APP_CMD} "-s" "-XPUT" "http://${agent_node}:${agent_port}/COMPSs/lostNode" -H 'content-type: application/xml' -d "\
+<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
+<lostNode>
+  <workerName>${resource_node}</workerName>
+</lostNode>"
+
+}
+
+
+###############################################
+###############################################
+# Main code
+###############################################
+###############################################
+
+get_args "$@"
+check_args "$@"
+shift $((options_index - 1))
+ 
+if [ $# -eq 0 ]; then
+  display_error "${ERROR_NO_TARGET_HOST}"
+  usage
+  exit
+fi
+
+resource_node=${1}
+shift 1
+
+display_invocation
+notify_lost_node

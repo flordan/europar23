@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+	xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+	xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+	<modelVersion>4.0.0</modelVersion>
+
+	<!-- GENERAL INFORMATION -->
+	<artifactId>compss-tests-agents</artifactId>
+	<packaging>pom</packaging>
+	<parent>
+		<groupId>es.bsc.compss.tests</groupId>
+		<artifactId>compss-tests</artifactId>
+		<version>3.1.rc2303</version>
+		<relativePath>..</relativePath>
+	</parent>
+
+	<!-- PROJECT INFORMATION -->
+	<name>COMPSs Framework Test - Agents</name>
+	<description>COMPSs Framework Tests - Agents</description>
+	<url>http://compss.bsc.es</url>
+	<inceptionYear>2014</inceptionYear>
+	<licenses>
+		<license>
+			<name>Apache License, Version 2.0</name>
+			<url>http://www.apache.org/licenses/LICENSE-2.0.html</url>
+		</license>
+	</licenses>
+	<organization>
+		<name>BSC</name>
+		<url>http://www.bsc.es</url>
+	</organization>
+
+	<!-- SUB-MODULES -->
+	<modules>
+		<module>0.1_1_agent_deployment</module>
+		<module>0.2_1_agent_stop</module>
+		<module>1_1_agent_compss</module>
+		<module>2_multiple_agents</module>
+		<module>3_multiple_sources</module>
+		<module>4.0_1_agent_nested</module>
+		<module>4.1_1_agent_nested_blocks</module>
+		<module>4.1_1_agent_nested_files</module>
+		<module>5.0_4_agent_nested</module>
+		<module>5.1_3_agents_nested_files</module>
+		<module>5.1_4_agent_nested_inout_object</module>
+	<!-- Add new modules below -->
+	</modules>
+</project>

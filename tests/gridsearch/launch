@@ -1,0 +1,120 @@
+#!/bin/bash
+
+base_app_dir="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+if [ "${#}" -eq 0 ]; then
+  echo "Select application version: FLAT | NESTED"
+fi
+version="${1}"
+if [ "${version}" == "FLAT" ]; then
+  invocation=""
+elif [ "${version}" == "NESTED" ]; then
+  invocation="_nested"
+else
+  echo "Unknown application version ${1}. Select application version: FLAT | NESTED"
+  exit 1
+fi
+shift 1
+
+combinations="${1}"
+if [ ! "${combinations}" == "25" ] && [ ! "${combinations}" == "50" ]; then
+  echo "Number of combinations not allowed. Select number of combinations: 25 | 50"
+  exit 1
+fi
+shift 1
+
+num_gridsearch=${1}
+if [ -z "${num_gridsearch}" ]; then
+  num_gridsearch=1
+fi
+shift 1
+
+dataset=${1}
+if [ -z "${dataset}" ]; then
+  dataset="IRIS"
+fi
+if [ "${dataset}" != "IRIS" ] && [ "${dataset}" != "iris" ] && \
+   [ "${dataset}" != "digits" ] && [ "${dataset}" != "DIGITS" ] && \
+   [ "${dataset}" != "AT" ] && [ "${dataset}" != "at"  ]; then
+    echo "Unknown dataset ${dataset}. Select dataset: IRIS | DIGITS | AT"
+    exit 1
+fi
+if [ "${dataset}" == "AT" ] || [ "${dataset}" == "at"  ]; then
+  dataset="${base_app_dir}/application/dataset/7500_100.pickle"
+fi
+echo "Running GridSearch's ${version} version training ${num_gridsearch} models for the ${dataset} dataset"
+
+
+NUM_RETRIES="3"
+
+log_dir="/tmp/test/"
+mkdir -p "${log_dir}"
+output_log="${log_dir}test.outputlog"
+error_log="${log_dir}test.errorlog"
+touch "${output_log}"
+touch "${error_log}"
+
+
+echo "Start Agents"
+echo "    Starting Agent1"
+agent_log_dir="${log_dir}/COMPSsWorker01/"
+agent_output_log="${log_dir}/COMPSsWorker01.outputlog"
+agent_error_log="${log_dir}/COMPSsWorker01.errorlog"
+
+compss_agent_start \
+  --hostname="COMPSsWorker01" \
+  --pythonpath=${base_app_dir}/application/main:${base_app_dir}/application/dislib${invocation} \
+  --log_dir="${agent_log_dir}" \
+  --rest_port="46101" \
+  --comm_port="46102" \
+  --project="${base_app_dir}/configuration/project1.xml" \
+  --resources="${base_app_dir}/configuration/resources.xml" \
+   1>"${agent_output_log}" 2>"${agent_error_log}" &
+
+agent_PID=${!}  
+
+sleep 5
+
+echo "Checking Agents"
+  retries="${NUM_RETRIES}"
+  curl -XGET "http://127.0.0.1:46101/COMPSs/test" 1>/dev/null 2>/dev/null
+  exit_val=$?
+  while [ ! "${exit_val}" == "0" ] && [ "${retries}" -gt "0" ]; do
+    sleep 1
+    retries=$((retries - 1 ))
+    curl -XGET "http://127.0.0.1:46101/COMPSs/test" 1>/dev/null 2>/dev/null
+    exit_val=$?
+  done
+  if [ ${exit_val} != 0 ]; then
+    echo "    Agent1 could not be started"
+    exit 1
+  fi
+echo "    Agent1 started"
+
+echo "Calling operation"
+compss_agent_call_operation \
+   --master_node="127.0.0.1" \
+   --master_port="46101" \
+   --lang=PYTHON \
+   --stop \
+    "--method_name=main_agents" \
+    gridsearch_csvm${combinations} "${num_gridsearch}" "${dataset}"
+
+echo "Waiting for result"
+wait ${agent_PID}
+
+echo "Training times:"
+#times=$(grep "Warm-up execution time" "${agent_log_dir}/jobs/job1_NEW.out" | sed 's/Warm-up execution time: //')
+#if [ -n "${times}" ]; then
+#  for time in ${times}; do
+#     echo "Warm-up model: ${time}" 
+#  done
+#fi
+
+times=$(grep "GridSearch execution time" "${agent_log_dir}/jobs/job1_NEW.out" | sed 's/GridSearch execution time: //')
+if [ -n "${times}" ]; then
+  model_id=1
+  for time in ${times}; do
+    echo "Model ${model_id}: ${time}" 
+    model_id=$(( model_id + 1 ))
+  done
+fi

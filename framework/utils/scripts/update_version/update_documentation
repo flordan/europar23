@@ -1,0 +1,102 @@
+#!/bin/bash
+
+usage() {
+  local exitValue=$1
+
+  echo " "
+  echo "Usage ./update_documentation <version> <commitChanges>"
+  echo " "
+
+  exit "$exitValue"
+}
+ 
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  # Check parameters
+  if [ $# -ne 2 ]; then
+    echo "ERROR: Incorrect number of parameters"
+    usage 1
+  fi
+
+  # Get version parameters
+  version=$1
+  commitChanges=$2
+  echo "Creating COMPSs ${version} documentation..."
+
+  # Define script variables
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  trunk_dir=${SCRIPT_DIR}/../../../
+  documentation_dir=${trunk_dir}/../documentation/COMPSs_Manuals/
+
+  # Clone documentation repo
+  cd ${trunk_dir}/..
+  rm -rf documentation
+  git clone http://${credentials}@gitlab.bsc.es/wdc/documents/documentation.git documentation
+
+
+
+  #---------------------------------------------------------------------
+  # Update internal files version on new tag
+  echo "- Update files version"
+  for readme in ${documentation_dir}/*/README; do
+    sed -i '/Version: /cVersion: '"${version}"'' ${readme}
+  done
+
+  for doc in ${documentation_dir}/*; do
+    cd "${doc}" || exit 1
+    latexFile=$(ls *.tex | grep -v configuration.tex)
+    echo "$latexFile"
+    sed -i '/Version: /cVersion: '"${version}"'' README
+    sed -i '/\\def \\compssversion/c\\\def \\compssversion \{'"${version}"'\}' "$latexFile"
+    sed -i 's/<\<version\>>/'"${version}"'/g' "$latexFile"
+    cd "${SCRIPT_DIR}" || exit 1
+  done
+
+  #---------------------------------------------------------------------
+  # Update internal files version on latest
+  echo "- Update files version"
+  sed -i '/Version: /cVersion: '"${version}"'' "${documentation_dir}/README"
+
+  for doc in ${documentation_dir}/*; do
+    cd "${doc}" || exit 1
+    latexFile=$(ls *.tex | grep -v configuration.tex)
+    echo "$latexFile"
+    sed -i '/Version: /cVersion: '"${version}"'' README
+    sed -i '/\\def \\compssversion/c\\\def \\compssversion \{'"${version}"'\}' "$latexFile"
+    sed -i 's/<\<version\>>/'"${version}"'/g' "$latexFile"
+    cd "${SCRIPT_DIR}" || exit 1
+  done
+
+  #---------------------------------------------------------------------
+  # Generate PDF files
+  echo "- Generate PDF files"
+
+  for doc in ${documentation_dir}/*; do
+    cd "${doc}" || exit 1
+    latexFile=$(ls *.tex | grep -v configuration.tex) 
+    pdflatex -interaction=nonstopmode "${latexFile}"
+    pdflatex -interaction=nonstopmode "${latexFile}"
+    pdflatex -interaction=nonstopmode "${latexFile}"
+    cd "${SCRIPT_DIR}" || exit 1
+  done
+
+  #---------------------------------------------------------------------
+  # Commit modifications
+  echo "- Commit modifications"
+  cd "${documentation_dir}" || exit 1
+  git tag COMPSs_Manuals_v${version} -f
+  if [ "$commitChanges" == "true" ]; then
+      git commit -am "Adding documentation new tag v${version}"
+      git push http://${credentials}@gitlab.bsc.es/wdc/documents/documentation.git master
+      git push http://${credentials}@gitlab.bsc.es/wdc/documents/documentation.git --tags --force
+  fi
+  cd "${SCRIPT_DIR}" || exit 1
+
+  #---------------------------------------------------------------------
+  # NOTIFY SUCCESS
+  echo " "
+  echo "FINISHED! COMPSs Tag ${version} Documentation updated"
+  echo " "
+
+  # END
+  exit 0

@@ -1,0 +1,54 @@
+#!/bin/bash -e 
+ 
+  #############################################################
+  # Name: buildP9
+  # Description: SCRIPT FOR CTE-Power9 COMPSs BUILD
+  # Parameters: <P9_user> CTE-Power9 user account. Preferable with ssh keys inserted
+  #             <FullTmpPath> Tmp path on CTE-Power9 for deployment
+  #             <FullTargetPath> Base Target Installation folder on CTE-Power9
+  #############################################################
+
+  ####################
+  # FUNCTIONS
+  ####################
+  usage() {
+    echo " Usage: buildP9 <P9_user> <FullTmpPath> <FullTargetPath>"
+    echo " "
+  }
+
+
+  ####################
+  # MAIN
+  ####################
+  # Get parameters
+  if [ $# -eq 1 ]; then
+    if [ "$1" == "usage" ]; then
+      usage
+      exit 0
+    fi
+  fi
+  if [ $# -ne 3 ]; then
+    echo "Incorrect number of parameters"
+    usage
+    exit 1
+  fi
+
+  # SET SCRIPT VARIABLES
+  scriptDir=$(pwd)/$(dirname $0)
+
+  P9user=$1
+  P9tmpDir=$2
+  P9targetDir=$3
+  P9loginNode=p9login1.bsc.es
+  P9auxScript=${scriptDir}/buildP9_aux
+  PRELOAD_ENV=""
+
+  # Perform installation
+  cd ${scriptDir}/../commons
+  ./buildSC ${P9user} ${P9loginNode} ${P9tmpDir} ${P9targetDir} ${P9auxScript} "${PRELOAD_ENV}"
+  exitStatus=$?
+  cd ${scriptDir}
+
+  # END
+  exit $exitStatus
+

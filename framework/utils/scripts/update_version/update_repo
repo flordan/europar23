@@ -1,0 +1,70 @@
+#!/bin/bash -e
+
+usage() {
+  exitValue=$1
+
+  echo " "
+  echo "Usage ./update_repo <repoGroup> <repoName> <previousVersion> <newVersion> <commitChanges>"
+  echo " * repoGroup:  refers to the group containing the repo in gitlab"
+  echo " * repoName: name of the repository (must be equal in both in gitlab and github for mirroring"
+  echo " NOTE: assumes master is the principal branch"
+  echo " "
+
+  exit "$exitValue"
+}
+ 
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  # Check parameters
+  if [ $# -ne 5 ]; then
+    echo "ERROR: Incorrect number of parameters"
+    usage 1
+  fi
+
+  # Get version parameters
+  repoGroup=$1
+  repoName=$2
+  previousVersion=$3
+  newVersion=$4
+  commitChanges=$5
+  echo "Updating ${repoGroup}/${repoName} from ${previousVersion} to ${newVersion}..."
+
+  # Define script variables
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  base_trunk_dir=${SCRIPT_DIR}/../../../
+
+
+  #---------------------------------------------------------------------
+  # Cloning apps repo
+  cd "${base_trunk_dir}"
+  GIT_LFS_SKIP_SMUDGE=1 git clone http://${credentials}@gitlab.bsc.es/wdc/${repoGroup}/${repoName}.git
+  cd ${repoName}
+
+
+  #---------------------------------------------------------------------
+  # Modify all pom files
+  echo "- Modifying pom files..."
+  mvn versions:set -DnewVersion=${newVersion}
+
+  #---------------------------------------------------------------------
+  # COMMIT MODIFICATIONS IF NEEDED
+  tag="v${newVersion}"
+  if [ "$commitChanges" == "true" ]; then
+    echo "- Committing modifications to master"
+    if git commit -am "Update to version ${newVersion}"; then
+        git push http://${credentials}@gitlab.bsc.es/wdc/${repoGroup}/${repoName}.git master
+        git tag "${tag}" -f
+        git push -f http://${credentials}@gitlab.bsc.es/wdc/${repoGroup}/${repoName}.git ${tag}
+    fi
+  fi
+
+
+  #---------------------------------------------------------------------
+  # NOTIFY SUCCESS
+  echo " "
+  echo "FINISHED! Repo ${repoGroup}/${repoName} version updated from ${previousVersion} to ${tag}"
+  echo " "
+
+
+  # END
+  exit 0

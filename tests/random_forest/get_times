@@ -1,0 +1,15 @@
+#!/bin/bash
+
+for output_type in output/*; do
+  exec_type=$(echo ${output_type} | sed 's/output\///');
+  for folder_exec in output/${exec_type}/.COMPSs/*; do
+    exec=$(echo ${folder_exec} | sed "s/output\/${exec_type}\/\.COMPSs\///");
+    nodes=$(grep "Workers:" output/${exec_type}/compss-${exec}.out | wc -w);
+    master=$(ls ${folder_exec} | sort| head -n1);
+    estimators=$(grep "_ numEstimators" ${folder_exec}/${master}/jobs/job1_NEW.out|sed 's/ ______ numEstimators//');
+    times=$(grep "Training" ${folder_exec}/${master}/jobs/job1_NEW.out| tail -n +2 |sed 's/TIME Training: //' | tr '\n' " ");
+
+    echo "${exec}" "${exec_type}" "${nodes}" "${estimators}" "${times}"
+
+  done
+done

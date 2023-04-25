@@ -1,0 +1,77 @@
+#!/bin/bash -e
+
+  # Define script constants
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+  # Script params
+  log_level="off"
+  job_dep="None"
+  
+  # QUEUE SYSTEM PARAMETERS
+  if [ "${#}" -eq "0" ]; then
+    echo "Please indicate number of nodes to be used."
+  fi
+  num_nodes=${1}
+  shift 1
+ 
+  if [ "${#}" -eq 0 ]; then
+    echo "Select application version: FLAT | NESTED"
+  fi
+  version="${1}"
+  if [ "${version}" == "FLAT" ]; then
+    invocation=""
+  elif [ "${version}" == "NESTED" ]; then
+    invocation="_nested"
+  else 
+    echo "Unknown application version ${1}. Select application version: FLAT | NESTED"
+    exit 1
+  fi
+  shift 1
+
+  combinations="${1}"
+  if [ ! "${combinations}" == "25" ] && [ ! "${combinations}" == "50" ]; then
+    echo "Number of combinations not allowed. Select number of combinations: 25 | 50"
+    exit 1
+  fi
+  shift 1
+
+  num_gridsearch=${1}
+  if [ -z "${num_gridsearch}" ]; then
+    num_gridsearch=1
+  fi
+
+  dataset=${2}
+  if [ -z "${dataset}" ]; then
+    dataset="IRIS"
+  fi
+
+  # Create output directory
+  log_dir="~/gridsearch/log/${version}/${num_nodes}"
+  mkdir -p "${log_dir}"
+
+  w_dir="~/gridsearch/wdir"
+  mkdir -p "${w_dir}"
+
+  exec_time=10
+
+  enqueue_compss \
+    --lang=python \
+    \
+    --job_dependency="${job_dep}" \
+    --num_nodes="${num_nodes}" \
+    --exec_time="${exec_time}" \
+    \
+    --cpus_per_node=48 \
+    --node_memory=94208 \
+    --worker_in_master_cpus=48 \
+    \
+    --log_dir="${log_dir}" \
+    --worker_working_dir="local_disk" \
+    --pythonpath=${SCRIPT_DIR}/application/main:${SCRIPT_DIR}/application/dislib${invocation} \
+    \
+    --log_level="${log_level}" \
+    \
+    --agents=plain \
+    \
+    "--method_name=main_agents" \
+    gridsearch_csvm${combinations} "${num_gridsearch}" "${dataset}"

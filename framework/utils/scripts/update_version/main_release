@@ -1,0 +1,55 @@
+#!/bin/bash -e
+
+usage() {
+  exitValue=$1
+
+  echo " "
+  echo "Usage ${0} new_version"
+  echo "E.g. ${0} 3.1.rc2303"
+  echo " "
+
+  exit "$exitValue"
+}
+
+
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+  # baseVersion:	Refers to the current version 
+  # Version: 		Refers to the new version to be created
+  # format:         Releases have are formed formed by two numbers, e.g.: '2 . 3' (with no spaces)
+  #                 Releases candidates have 'rc' tag and + month (MM) + year (YY), e.g.: '2 . 3 . rc 1808' (with no spaces)
+  #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+  if [ $# -ne 1 ]; then
+    echo "ERROR: Incorrect number of parameters"
+    echo "Probably jenkins build parameter 'version' was not set."
+    usage 1
+  fi
+
+  version=$1
+
+  # Get base version from trunk
+  SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+  trunk_dir=${SCRIPT_DIR}/../../../
+  baseVersion=$(cat "${trunk_dir}/pom.xml" | grep "compss.version" | tr ">" "\t" | awk '{ print $2 }' | tr "<" "\t" | awk '{ print $1 }')
+
+  echo "Updating COMPSs base version ${baseVersion} to ${version}"
+
+  # Perform update process
+  commitChanges="true"
+  ./update_trunk_version "${baseVersion}" "${version}" "${commitChanges}"
+  ./generate_tag "${version}" "${commitChanges}"
+  #./update_documentation "${version}" "${commitChanges}"
+  ./update_repo "bar" "apps" "${baseVersion}" "${version}" "${commitChanges}"
+  ./update_repo "bar" "tutorial_apps" "${baseVersion}" "${version}" "${commitChanges}"
+  ./mvn_deploy_tag "${version}"
+
+  # Deploy to SCs
+  ./deploy_tag_to_MN "${version}"
+  ./deploy_tag_to_Nord "${version}"
+  ./deploy_tag_to_MT "${version}"
+  ./deploy_tag_to_P9 "${version}"
+  ./deploy_tag_to_AMD "${version}"
+  # END
+  echo "ALL SUCCESS!"
+  exit 0
+

@@ -1,0 +1,181 @@
+digraph {
+  newrank=true;
+  rankdir=TB;
+  labeljust="l";
+  compound= true;
+  subgraph dependence_graph {
+    ranksep=0.20;
+    node[height=0.75];
+
+Synchro0[label="main", shape=octagon, style=filled fillcolor="#8B0000" fontcolor="#FFFFFF"];
+1[shape=circle, style=filled fillcolor="#0000ff" fontcolor="#ffffff"];
+Synchro0 -> 1;
+2[shape=circle, style=filled fillcolor="#ffffff" fontcolor="#000000"];
+Synchro0 -> 2;
+3[shape=circle, style=filled fillcolor="#ffffff" fontcolor="#000000"];
+Synchro0 -> 3;
+4[shape=circle, style=filled fillcolor="#0000ff" fontcolor="#ffffff"];
+Synchro0 -> 4;
+5[shape=circle, style=filled fillcolor="#0000ff" fontcolor="#ffffff"];
+Synchro0 -> 5;
+2 -> 6 [label="d2v2"];
+3 -> 6 [label="d3v2"];
+4 -> 7 [label="d4v2"];
+5 -> 7 [label="d5v2"];
+8[shape=circle, style=filled fillcolor="#ff00ae" fontcolor="#000000"];
+subgraph clusterCommutative6_2 {
+shape=rect;
+node[height=0.75];
+color="#A9A9A9";
+rank=same;
+label="CGT6_2";
+
+6[shape=circle, style=filled fillcolor="#ff0000" fontcolor="#000000"];
+7[shape=circle, style=filled fillcolor="#ff0000" fontcolor="#000000"];
+}
+
+6 -> 8 [label="d6v3"][ ltail="clusterCommutative6_2" ];
+8 -> 9 [label="d6v4"];
+8 -> 10 [label="d6v4"];
+8 -> 11 [label="d6v4"];
+subgraph clusterCommutative6_4 {
+shape=rect;
+node[height=0.75];
+color="#A9A9A9";
+rank=same;
+label="CGT6_4";
+
+9[shape=circle, style=filled fillcolor="#b30000" fontcolor="#ffffff"];
+10[shape=circle, style=filled fillcolor="#b30000" fontcolor="#ffffff"];
+11[shape=circle, style=filled fillcolor="#b30000" fontcolor="#ffffff"];
+}
+
+9 -> 12 [label="d6v7"][ ltail="clusterCommutative6_4" ];
+1 -> 12 [label="d1v2"];
+9 -> 13 [label="d6v7"][ ltail="clusterCommutative6_4" ];
+1 -> 13 [label="d1v2"];
+9 -> 14 [label="d6v7"][ ltail="clusterCommutative6_4" ];
+1 -> 14 [label="d1v2"];
+subgraph clusterCommutative1_5 {
+shape=rect;
+node[height=0.75];
+color="#A9A9A9";
+rank=same;
+label="CGT1_5";
+
+12[shape=circle, style=filled fillcolor="#00ff00" fontcolor="#000000"];
+13[shape=circle, style=filled fillcolor="#00ff00" fontcolor="#000000"];
+14[shape=circle, style=filled fillcolor="#00ff00" fontcolor="#000000"];
+}
+
+12 -> 15 [label="d1v5"][ ltail="clusterCommutative1_5" ];
+12 -> 16 [label="d1v5"][ ltail="clusterCommutative1_5" ];
+12 -> 17 [label="d1v5"][ ltail="clusterCommutative1_5" ];
+18[shape=circle, style=filled fillcolor="#ffff00" fontcolor="#000000"];
+subgraph clusterCommutative1_4 {
+shape=rect;
+node[height=0.75];
+color="#A9A9A9";
+rank=same;
+label="CGT1_4";
+
+15[shape=circle, style=filled fillcolor="#b30000" fontcolor="#ffffff"];
+16[shape=circle, style=filled fillcolor="#b30000" fontcolor="#ffffff"];
+17[shape=circle, style=filled fillcolor="#b30000" fontcolor="#ffffff"];
+}
+
+15 -> 18 [label="d1v8"][ ltail="clusterCommutative1_4" ];
+Synchro1[label="sync", shape=octagon, style=filled fillcolor="#ff0000" fontcolor="#FFFFFF"];
+Synchro0 -> Synchro1;
+9 -> Synchro1 [label="d6v7"][ ltail="clusterCommutative6_4" ];
+15 -> Synchro1 [label="d1v8"][ ltail="clusterCommutative1_4" ];
+Synchro1 -> 19;
+Synchro1 -> 20;
+Synchro1 -> 21;
+Synchro1 -> 22;
+Synchro1 -> 23;
+Synchro1 -> 24;
+Synchro1 -> 25;
+Synchro2[label="sync", shape=octagon, style=filled fillcolor="#ff0000" fontcolor="#FFFFFF"];
+Synchro1 -> Synchro2;
+19 -> Synchro2 [label="d8v9"][ ltail="clusterCommutative8_7" ];
+subgraph clusterCommutative8_7 {
+shape=rect;
+node[height=0.75];
+color="#A9A9A9";
+rank=same;
+label="CGT8_7";
+
+19[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+20[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+21[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+22[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+23[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+24[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+25[shape=circle, style=filled fillcolor="#eb0000" fontcolor="#ffffff"];
+}
+
+26[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+Synchro2 -> 26;
+27[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+26 -> 27 [label="d9v2"];
+28[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+27 -> 28 [label="d9v3"];
+29[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+28 -> 29 [label="d9v4"];
+30[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+29 -> 30 [label="d9v5"];
+31[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+30 -> 31 [label="d9v6"];
+32[shape=circle, style=filled fillcolor="#00a200" fontcolor="#ffffff"];
+31 -> 32 [label="d9v7"];
+Synchro3[label="sync", shape=octagon, style=filled fillcolor="#ff0000" fontcolor="#FFFFFF"];
+Synchro2 -> Synchro3;
+32 -> Synchro3 [label="d9v9"];  }
+  subgraph legend {
+    rank=sink;
+    node [shape=plaintext, height=0.75];
+    ranksep=0.20;
+    label = "Legend";
+    key [label=<
+      <table border="0" cellpadding="2" cellspacing="0" cellborder="1">
+<tr>
+<td align="right">testCommutativeAnnotation.write_one</td>
+<td bgcolor="#0000ff">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">testCommutativeAnnotation.write_two_slow</td>
+<td bgcolor="#ffffff">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">testCommutativeAnnotation.check_results</td>
+<td bgcolor="#ff00ae">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">testCommutativeAnnotation.write_commutative</td>
+<td bgcolor="#ff0000">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">testCommutativeAnnotation.addOne_commutative</td>
+<td bgcolor="#b30000">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">testCommutativeAnnotation.accumulate_commutative</td>
+<td bgcolor="#00ff00">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">testCommutativeAnnotation.check_results2</td>
+<td bgcolor="#ffff00">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">models.PersistentObject.write_three</td>
+<td bgcolor="#eb0000">&nbsp;</td>
+</tr>
+<tr>
+<td align="right">models.PersistentObject.write_four</td>
+<td bgcolor="#00a200">&nbsp;</td>
+</tr>
+      </table>
+    >]
+  }
+}

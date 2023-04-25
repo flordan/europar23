@@ -1,0 +1,20 @@
+#!/bin/bash
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+if [ "${#}" -eq 0 ]; then
+  echo "Select test to execute: random_forest| gridsearch"
+fi
+
+if [ "${1}" == "random_forest" ]; then
+  shift 1
+  "${DIR}/tests/random_forest/launch" $*
+  exit $?
+elif [ "${1}" == "gridsearch" ]; then
+  shift 1
+  "${DIR}/tests/gridsearch/launch" $*
+  exit $?
+else 
+  echo "Unknown test ${1}. Select test to execute: random_forest| gridsearch"
+  exit 1
+fi

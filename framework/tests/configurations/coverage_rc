@@ -1,0 +1,29 @@
+[run]
+parallel=true
+data_file=@TEST_OUTPUT_PATH@/coverage/coverage
+omit =
+    */dist-packages/*
+    */site-packages/*
+    */distutils/*
+    /usr/lib/*
+    /opt/COMPSs/Bindings/python/2/tests/*
+    /opt/COMPSs/Bindings/python/3/tests/*
+    @TEST_OUTPUT_PATH@/*
+concurrency = multiprocessing
+[paths]
+source =
+    @PYCOMPSS_SRC_PATH@
+    /opt/COMPSs/Bindings/python/2/
+    /opt/COMPSs/Bindings/python/3/
+
+[report]
+omit =
+    */dist-packages/*
+    */site-packages/*
+    */distutils/*
+    /usr/lib/*
+    /opt/COMPSs/Bindings/python/2/tests/*
+    /opt/COMPSs/Bindings/python/3/tests/*
+    @TEST_OUTPUT_PATH@/*
+[xml]
+output=@TEST_OUTPUT_PATH@/coverage/coverage.xml

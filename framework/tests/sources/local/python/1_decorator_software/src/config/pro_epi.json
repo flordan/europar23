@@ -1,0 +1,16 @@
+
+{
+	"execution" : {
+		"type":"binary",
+        "binary":"date",
+        "working_dir": "/tmp"
+	},
+	"prolog":{
+		"binary":"echo",
+		"args":"this is prolog"
+	},
+	"epilog":{
+		"binary":"echo",
+		"args":"this is epilog"
+	}
+}
